@@ -16,3 +16,6 @@
   review. New optional requirement: one of these editors (see README, Requirements).
 - Needs herdr-app 0.1.16. `herdr-app check` on the mod starts no process, watches nothing and stores nothing: the
   check draws the remembered list.
+- Watches are given back: a repo that is no longer in use, a checkout that is gone and, while the panel is hidden,
+  every repo without a space cancel their watch, so the mod no longer fills Herdr's 64 watched folders. A repo is
+  read once when its watch starts.

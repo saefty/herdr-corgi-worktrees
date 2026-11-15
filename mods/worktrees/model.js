@@ -321,21 +321,20 @@ export function branchCard(out, { base = null, prs = null, here = null } = {}) {
 // Width of one side of a branch's bar: 0 for nothing, then a log scale (1 commit is visible, 60 fill it).
 export const barPx = (n, full = 36) => (n > 0 ? Math.max(3, Math.round(Math.min(1, Math.log2(n + 1) / 6) * full)) : 0);
 
-// Which repos get a watch on their git folder. Herdr watches at most 64 folders for all mods together, and a
-// watch cannot be given back before something changes there, so this mod takes few and keeps them: the ones in
-// use first (`order`: checkout paths, the most used first), a repo once for all its worktrees, never more than
-// `max` including the ones `have` already. Gives the paths to add.
-export function watchPlan(repos, order, have, max) {
-  const by = new Map(repos.map((r) => [r.path, r])), out = [], taken = new Set(have);
+// Which repos get a watch on their git folder. Herdr watches at most 64 folders for all mods together, so this mod
+// asks for few: the checkouts in use (`order`: their paths, the most used first), a repo once for all its
+// worktrees, never more than `max`. Gives the paths to watch; whatever is watched and not among them is cancelled.
+export function watchPlan(repos, order, max) {
+  const by = new Map(repos.map((r) => [r.path, r])), out = new Set();
   for (const p of order) {
     const r = by.get(p);
     if (!r) continue;
     const key = r.main && by.has(r.main) ? r.main : r.path; // a worktree is covered by its repo's .git when that is listed
-    if (taken.has(key)) continue;
-    if (taken.size >= max) break;
-    taken.add(key); out.push(key);
+    if (out.has(key)) continue;
+    if (out.size >= max) break;
+    out.add(key);
   }
-  return out;
+  return [...out];
 }
 
 // ---- the window and Go to ---------------------------------------------------------------------------------------

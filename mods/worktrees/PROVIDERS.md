@@ -70,7 +70,7 @@ Without the hook there are no contexts: everything is listed, rows carry no cont
 | Key | Shape | When |
 |---|---|---|
 | `worktrees.api` | `{version: 1}` | at start |
-| `worktrees.count` | `{total, contexts: {<id>: n}, none, at}` | after every full pass and whenever a count changes; confirmed at least every 30 minutes |
+| `worktrees.count` | `{total, contexts: {<id>: n}, none, at}` | after every full pass and whenever a count changes (panel hidden: changes in repos with a space); confirmed at least every 30 minutes |
 | `goto.items.worktrees` | Go to items, see below | with Go to installed (`goto.api`) and the `goto` setting on |
 
 `worktrees.count` is how many repos have commits that exist only on this machine: ahead of their upstream, or on a

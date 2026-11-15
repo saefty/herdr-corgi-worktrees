@@ -94,7 +94,8 @@ never write to a repo.
   `git status`, one process for all of them, and git runs only for those. What was known is kept across app
   starts, so the list is there at once. All checkouts are checked when the panel opens and on ↻; while it stays
   open, only the ones in use (a space or a terminal in them, or changes from the last day) every five minutes; a
-  watch on the `.git` of up to 32 repos in use reports commits and pushes right away.
+  watch on the `.git` of the repos in use (32 at most) reports commits and pushes right away. A repo that is no
+  longer in use gives its watch back, and while the panel is hidden only repos with a space keep one.
 - Other mods can add pull request marks, split the list by context (work and personal, say), read the number of
   repos that are not pushed for a button, and find the listed checkouts in Go to. Without any of them the panel
   works on its own.
@@ -218,7 +219,8 @@ one. `corgi diff worktrees` shows what you changed.
   `editor.js` (`LINE_BASE`). The panel itself opens files without a line.
 - "Not pushed" looks at the branch each checkout has checked out. Other branches with local commits show in the
   branch card.
-- The count for a bar is live only after the panel was shown once since the app started.
+- The count for a bar is live only after the panel was shown once since the app started. While the panel is
+  hidden it follows the repos that have a space; the others are counted again when the panel is back on screen.
 - A checkout nobody uses is checked when the panel opens and on ↻, not in between: the header says "as of 13:40
   (all 13:05)" then.
 - The helper does not see one thing: a new untracked file two or more folders below any tracked folder, inside a

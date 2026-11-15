@@ -21,12 +21,12 @@ import { editorLink, editorFor, rootInfo, rootRead, forgetRoots, checkoutOf, sta
 const PARALLEL = 8;
 const RESCAN_MS = 30 * 60 * 1000;
 // All checkouts are checked when the panel opens and on ↻. While it stays open, every STATUS_MS only the ones in
-// use: with a space or a terminal in them, or with files changed lately. A watch on each .git reports commits,
-// checkouts, staging and pushes right away.
+// use: with a space or a terminal in them, or with files changed lately. A watch on the .git of the ones in use
+// reports commits, checkouts, staging and pushes right away.
 const STATUS_MS = 5 * 60 * 1000;
 const TICK_MS = 10 * 1000;  // how often the panel looks whether it is shown (a layout lookup, no process)
 const WATCH_MS = 1500;      // .git changes are collected this long, then checked together
-const WATCH_MAX = 32;       // Herdr watches at most 64 folders for all mods together: this mod takes half, for the repos in use
+const WATCH_MAX = 32;       // Herdr watches at most 64 folders for all mods together: this mod never holds more than half
 const INDEX_MS = 60 * 1000; // … but when only the index file moved (staging, or another tool's git status): this long
 const PROBES = 4;           // a full pass runs up to this many probes side by side, so the list fills in parts
 const PROBE_MIN = 40;       // … but not for fewer checkouts than this each
@@ -63,7 +63,7 @@ export default class Worktrees extends View {
     this.flagged = new Set(); // checkouts whose .git changed, waiting for the next check
     this.slow = new Set();    // the same, when only their index file changed: checked once a minute
     this.bases = new Map();  // common git dir -> the base branch its card last used
-    this.watched = new Map(); // path -> the folder watched for it
+    this.watches = new Map(); // path -> {dir, handle}: the git folder watched for it and the pending watchFolder call
     this.prs = M.prIndex(null); // from providers, see prsNow
     this.spaceOf = new Map();
     this.famOpen = new Set(); // repos whose unpushed worktrees are all listed
@@ -105,7 +105,7 @@ export default class Worktrees extends View {
     // While shown: the checkouts in use every STATUS_MS. While hidden: nothing, but remember it (render is not
     // called then), so that opening the panel checks all of them.
     cx.timer.every(TICK_MS, (cx) => {
-      if (!shownNow()) this.away = true;
+      if (!shownNow()) { if (!this.away) { this.away = true; this.watchAll(cx); } } // hidden: the watches only a shown list needs are given back
       else if (this.tickAt && Date.now() - this.tickAt > STATUS_MS) cx.spawn((cx) => this.pass(cx, "tick", this.inUse()));
     });
     cx.timer.every(INDEX_MS, (cx) => {
@@ -308,12 +308,12 @@ export default class Worktrees extends View {
     return runs;
   }
 
-  // The checkouts in use: with a space or a terminal in them, or with tracked changes or commits from the last day.
-  // The ones with a space first, then the most recently touched.
-  inUse() {
+  // The checkouts in use: with a space or a terminal in them, or (unless spacesOnly) with tracked changes or commits
+  // from the last day. The ones with a space first, then the most recently touched.
+  inUse(spacesOnly = false) {
     const now = Date.now(), open = spaceMap(new Set(this.repos.map((r) => r.path)));
     const at = (r) => M.touched(this.info[r.path], this.times[r.path]).at ?? 0;
-    return this.repos.filter((r) => open.has(r.path) || now - at(r) < M.DAY)
+    return this.repos.filter((r) => open.has(r.path) || (!spacesOnly && now - at(r) < M.DAY))
       .sort((a, b) => Number(open.has(b.path)) - Number(open.has(a.path)) || at(b) - at(a)).map((r) => r.path);
   }
 
@@ -328,6 +328,7 @@ export default class Worktrees extends View {
     const paths = only ?? this.repos.map((r) => r.path);
     if (!paths.length) return;
     this.running = true; this.checked = 0; this.total = paths.length;
+    for (const p of paths) { this.flagged.delete(p); this.slow.delete(p); } // flagged before now: this pass reads them
     const started = Date.now();
     let runs = 0, asked = 0;
     try {
@@ -358,8 +359,9 @@ export default class Worktrees extends View {
       if (this.noProbe) runs += await this.ages(paths);
     } finally { this.running = false; } // whatever fails, the next pass may start
     this.checkedAt = Date.now();
-    if (kind === "full") { this.fullAt = this.sessionFull = this.checkedAt; this.watchAll(cx); } // now it is known which ones are in use
-    if (kind === "full" || kind === "tick") this.tickAt = this.checkedAt; // watch checks in between do not put the tick off
+    if (kind === "full") this.fullAt = this.sessionFull = this.checkedAt;
+    // watch checks in between do not put the tick off; and now it is known which ones are in use
+    if (kind === "full" || kind === "tick") { this.tickAt = this.checkedAt; this.watchAll(cx); }
     this.passes = { ...this.passes, [kind]: { checkouts: paths.length, starts: runs, git: asked, ms: Date.now() - started, at: this.checkedAt } };
     try { localStorage.setItem("pass", JSON.stringify(this.passes)); } catch {}
     this.save();
@@ -397,20 +399,34 @@ export default class Worktrees extends View {
     if (JSON.stringify(items) !== JSON.stringify(shared(`goto.items.${NAME}`) ?? null)) setShared(`goto.items.${NAME}`, items);
   }
 
-  // Re-check a repo when its .git changes: for the repos in use, at most WATCH_MAX of them (model.js watchPlan).
-  // A worktree's git folder lies inside its repo's .git, so that repo's watch covers it (touch sorts the changes
-  // out). Everything else is checked when the panel opens, on ↻ and, while in use, every five minutes.
+  // Re-check a repo when its .git changes: only the repos in use, at most WATCH_MAX of them (model.js watchPlan),
+  // and while the panel is hidden only the ones with a space or a terminal in them (the count for a bar stays right
+  // where work happens). Called after a scan, after a check of all or of the ones in use, and when the panel hides
+  // or comes back. A repo that left the plan has its pending watch cancelled: Herdr watches 64 folders for all mods
+  // together, and a folder nobody looks at must not hold one. A worktree's git folder lies inside its repo's .git,
+  // so that repo's watch covers it (touch sorts the changes out). Everything else is checked when the panel opens,
+  // on ↻ and, while in use, every five minutes.
   watchAll(cx) {
-    for (const path of [...this.watched.keys()]) if (!this.byPath.has(path)) this.watched.delete(path); // gone: its loop ends at its next change
-    for (const path of M.watchPlan(this.repos, this.inUse(), [...this.watched.keys()], WATCH_MAX)) {
-      const r = this.byPath.get(path), dir = r.main ? r.gitdir : `${path}/.git`;
-      this.watched.set(path, dir);
+    const want = new Map(M.watchPlan(this.repos, this.inUse(!shownNow()), WATCH_MAX).map((path) => { const r = this.byPath.get(path); return [path, r.main ? r.gitdir : `${path}/.git`]; }));
+    for (const [path, w] of this.watches) if (want.get(path) !== w.dir) { this.watches.delete(path); w.handle?.cancel(); }
+    for (const [path, dir] of want) {
+      if (this.watches.has(path)) continue;
+      const w = { dir };
+      // A refusal (Herdr's 64 folders are taken) counts as an empty batch.
+      const arm = () => { w.handle = watchFolder(dir); w.next = w.handle.then((paths) => paths, () => []); };
+      this.watches.set(path, w);
+      arm();
+      // Nothing told of changes until now (and Herdr may drop a watch nobody waits on): now that the watch is on,
+      // the repo and its worktrees are read as if everything in it had changed.
+      this.touch(path, dir, [dir], cx);
       cx.spawn(async (cx) => {
-        while (this.watched.get(path) === dir) {
-          let changed;
-          try { changed = await watchFolder(dir); } catch { this.watched.delete(path); return; }
-          if (this.watched.get(path) !== dir) return;
-          await this.touch(path, dir, changed ?? [], cx);
+        for (;;) {
+          const changed = await w.next;
+          if (this.watches.get(path) !== w) return; // cancelled above
+          // No paths without a cancel: the watch was refused or Herdr ended it. The next plan starts it again.
+          if (!changed?.length) { this.watches.delete(path); return; }
+          arm();
+          this.touch(path, dir, changed, cx);
           cx.notify();
         }
       });
@@ -420,7 +436,7 @@ export default class Worktrees extends View {
   // A watched git folder changed: note which checkouts the changed paths belong to, and check them together a
   // moment later. Files under .git/worktrees/<name>/ are that worktree's own (index, HEAD, log); everything else is
   // the repo's. When remote refs moved (push, fetch), every worktree of the repo is ahead or behind against them too.
-  async touch(path, dir, changed, cx) {
+  touch(path, dir, changed, cx) {
     const wt = (p) => /\/\.git\/worktrees\/([^/]+)/.exec(p)?.[1] ?? null;
     const names = new Set(changed.map(wt).filter(Boolean));
     const own = !changed.length || changed.some((p) => !wt(p));
@@ -638,7 +654,8 @@ export default class Worktrees extends View {
     // notifying during render throws.
     if (shown && this.away) {
       this.away = false;
-      if (this.fullAt && Date.now() - this.fullAt > 60000) cx.timer.after(0, (cx) => cx.spawn((cx) => this.pass(cx, "full")));
+      const stale = this.fullAt && Date.now() - this.fullAt > 60000;
+      cx.timer.after(0, (cx) => (stale ? cx.spawn((cx) => this.pass(cx, "full")) : this.watchAll(cx))); // a pass ends with watchAll
     }
     this.hook = this.contexts();
     this.prsNow();

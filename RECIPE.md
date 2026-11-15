@@ -45,7 +45,8 @@ branch stays.
   start; rows update as their answers come in, and the header says "checking 8/21 …" meanwhile.
 - When: all checkouts at start, on ↻ and when the panel comes back on screen after more than a minute. Every 5
   minutes while it is on screen only the checkouts in use: a space's folder or a terminal inside, or touched in the
-  last day (a check after a `.git` change does not put this off). A watch on the `.git` of up to 32 repos in use flags that checkout
+  last day (a check after a `.git` change does not put this off). A watch on the `.git` of the repos in use (32 at most; hidden: only
+  the ones with a space) flags that checkout
   (and the worktrees its changed paths belong to); flags are collected for 1.5 s and checked together, or for a
   minute when only index files moved (staging, or another tool's `git status`). One check runs at a time. The header says "git as of 13:40
   (all 13:05)" when the last check of everything is older.
@@ -138,9 +139,13 @@ last pass. Settings: `worktrees.config.json` in the app home.
   changed files.
 - A worktree's git folder lies inside its repo's `.git`: one watch per repo covers its worktrees, and the changed
   paths say which checkout to re-check.
-- Herdr watches at most 64 folders for all mods together ("already watching 64 folders"), and a watch cannot be
-  given back before something changes there. A watch per repo starves the other mods: watch at most 32, the repos
-  in use first (`model.js watchPlan`), and keep them.
+- Herdr watches at most 64 folders for all mods together ("already watching 64 folders"). A watch per repo
+  starves the other mods: watch at most 32, the repos in use first (`model.js watchPlan`). Keep the promise
+  `watchFolder` returns and call its `cancel()` when the repo is no longer in use or the panel is hidden; a loop
+  that only stops at the next change holds the folder until then, for a removed checkout forever.
+- A watch tells nothing about the time before it started, and Herdr may drop one nobody waits on: read the repo
+  once right after `watchFolder` was called for it. An empty batch that was not your cancel means the watch ended:
+  do not call again in a loop, start it with the next plan.
 - A stash belongs to the repo: every worktree reports it.
 - BSD `stat -f '%m %N'` and GNU `stat -c '%Y %n'` differ; try one, then the other.
 - Never judge "merged" by ancestry: a squash merge leaves the branch unmerged.
