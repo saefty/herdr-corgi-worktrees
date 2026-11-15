@@ -130,7 +130,9 @@ folder New worktree creates checkouts in (`worktrees.directory`, else `~/.herdr/
   checkouts times one `git status` took 90 s at 5 s of CPU, and bundling them into one `sh -c` changed nothing.
   The fix is fewer processes, not fewer `exec` calls.
 - The probe must never answer wrongly: whatever it cannot read (reftable, an index version it does not know, a
-  truncated file) gives no fingerprint, and git is asked.
+  truncated file, a split index, a checked-out submodule) gives no fingerprint, and git is asked.
+- Never fingerprint with "the newest time among the files": one file dated in the future hides every change after
+  it. Each file's own times and size go into a digest.
 - `cx.notify()` during `render` throws, and a `cx.spawn` started in `render` runs at once. Start a pass from
   `render` through `cx.timer.after(0, …)`.
 - `render` is not called while the block is hidden. A 10 s timer notes "hidden", and the next render re-checks.

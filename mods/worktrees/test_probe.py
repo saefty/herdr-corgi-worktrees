@@ -134,6 +134,41 @@ def main():
         os.rmdir(f"{repo}/.git/reftable")
         assert look(f"{tmp}/missing")["fp"] is None
 
+        # one file dated in the future must not hide what changes after it
+        late = f"{tmp}/late"
+        git(tmp, "init", "-q", "-b", "main", late)
+        write(f"{late}/a.txt", "a\n"); write(f"{late}/b.txt", "b\n"); write(f"{late}/dir/c.txt", "c\n")
+        git(late, "add", "-A"); git(late, "commit", "-qm", "chore: start")
+        ahead = time.time() + 86400
+        os.utime(f"{late}/a.txt", (ahead, ahead)); os.utime(f"{late}/dir", (ahead, ahead)); git(late, "status")
+        before = look(late)["fp"]
+        assert before and look(late)["fp"] == before
+        write(f"{late}/b.txt", "b changed\n")
+        assert look(late)["fp"] != before, "a tracked file edited after another one was dated in the future"
+        before = look(late)["fp"]
+        write(f"{late}/new.txt", "x")
+        assert look(late)["fp"] != before, "an untracked file added after a folder was dated in the future"
+
+        # a split index lists only part of the checkout here: no fingerprint
+        split = f"{tmp}/split"
+        git(tmp, "init", "-q", "-b", "main", split)
+        write(f"{split}/a.txt", "a\n"); git(split, "add", "-A"); git(split, "commit", "-qm", "chore: start")
+        assert look(split)["fp"]
+        git(split, "update-index", "--split-index")
+        assert any(n.startswith("sharedindex.") for n in os.listdir(f"{split}/.git")) and look(split)["fp"] is None, "split index"
+        git(split, "update-index", "--no-split-index")
+        assert look(split)["fp"]
+
+        # a checked-out submodule changes without the checkout's own files moving: no fingerprint, git is asked
+        lib, app = f"{tmp}/lib", f"{tmp}/app"
+        for d in (lib, app):
+            git(tmp, "init", "-q", "-b", "main", d); write(f"{d}/x.txt", "x\n"); git(d, "add", "-A"); git(d, "commit", "-qm", "chore: start")
+        assert look(app)["fp"]
+        git(app, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "vendor/lib"); git(app, "commit", "-qm", "chore: add lib")
+        assert look(app)["fp"] is None and look(app)["branch"] == "main", "a submodule"
+        git(app, "submodule", "--quiet", "deinit", "-f", "vendor/lib")   # its folder is empty again: nothing in it can change
+        assert look(app)["fp"]
+
         # the command line: one JSON line per checkout, in order
         out = subprocess.run([sys.executable, probe.__file__, repo, f"{repo}/.git", f"{repo}/.git", wt, f"{repo}/.git/worktrees/wt", f"{repo}/.git"],
                              capture_output=True, text=True, check=True).stdout.splitlines()

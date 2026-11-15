@@ -8,10 +8,13 @@ Prints one JSON line per checkout:
      "t": {"head", "index", "files", "fetch"}}          times in ms, null when unknown
 fp is a fingerprint of everything `git status` depends on that can be read without git: HEAD and upstream
 commits, what the index lists (paths, blobs, flags: not its file time, which every `git status` of another tool
-moves), the newest change time among the tracked files, the modification times of their
+moves), every tracked file's times and size, the modification times of their
 folders and of the folders right below them (where untracked files would show up), the stash and the remote refs.
+Each file and folder goes into a digest with its own times, not as one newest time: a single file dated in the
+future would hide every later change behind it.
 The same fp as last time means git status would say the same, so the mod does not ask git again. fp is null when
-this script cannot tell (a ref backend or an index it does not read): the mod asks git then.
+this script cannot tell (a ref backend or an index it does not read, a split index, a checked-out submodule):
+the mod asks git then.
 Known gap: a new untracked file two or more levels below any tracked folder, inside a folder that existed before
 and held only ignored files, does not change fp.
 Reads only. Standard library only.
@@ -22,7 +25,7 @@ import os
 import struct
 import sys
 
-EXTENSIONS = {b"TREE", b"REUC", b"link", b"UNTR", b"FSMN", b"EOIE", b"IEOT", b"sdir"}
+EXTENSIONS = {b"TREE", b"REUC", b"UNTR", b"FSMN", b"EOIE", b"IEOT", b"sdir"}  # not "link": see index_entries
 
 
 def read(path, mode="r"):
@@ -81,9 +84,15 @@ def index_entries(data, digest=None):
             out.append((path, ms * 1_000_000_000 + mn, size, mode, skip))
     except (struct.error, ValueError, IndexError):
         return None
-    rest = len(data) - pos
-    if rest not in (20, 32) and data[pos:pos + 4] not in EXTENSIONS:
-        return None  # not where the entries end: a format this does not read
+    # What follows the entries: extensions (a name, a length, that many bytes), then the checksum (20 bytes, or 32
+    # in a SHA-256 repo). A name this does not know means a format it does not read. So does "link": a split
+    # index keeps most entries in a sharedindex file, and the ones listed here are not the whole checkout.
+    while len(data) - pos > 20 and not (len(data) - pos == 32 and data[pos:pos + 4] not in EXTENSIONS):
+        if data[pos:pos + 4] not in EXTENSIONS or len(data) - pos < 8:
+            return None
+        pos += 8 + struct.unpack(">I", data[pos + 4:pos + 8])[0]
+    if len(data) - pos not in (20, 32):
+        return None
     return out
 
 
@@ -130,22 +139,25 @@ def remotes(common, cache):
     key = ("remotes", common)
     if key not in cache:
         oids = {oid for name, oid in packed(common, cache).items() if name.startswith("refs/remotes/")}
-        stamp = [mtime_ms(os.path.join(common, "packed-refs")) or 0]
+        stamp = [("packed-refs", mtime_ms(os.path.join(common, "packed-refs")) or 0)]
         for root, _dirs, files in os.walk(os.path.join(common, "refs", "remotes")):
-            stamp.append(mtime_ms(root) or 0)
+            stamp.append((root, mtime_ms(root) or 0))
             for f in files:
                 p = os.path.join(root, f)
-                stamp.append(mtime_ms(p) or 0)
+                stamp.append((p, mtime_ms(p) or 0))
                 text = read(p)
                 if text and not text.startswith("ref: "):
                     oids.add(text.strip())
-        cache[key] = (oids, f"{max(stamp)}.{len(stamp)}")
+        # every ref's own time, not the newest of them: one dated in the future would hide the others
+        cache[key] = (oids, hashlib.blake2b(repr(sorted(stamp)).encode(), digest_size=8).hexdigest())
     return cache[key]
 
 
 def worktree(path, entries):
-    """(newest change among tracked files ns, newest folder change ns, missing, newest changed tracked file ms)."""
-    newest = folders = missing = 0
+    """(digest of every tracked file's and folder's times, missing, newest changed tracked file ms, submodules).
+    submodules: how many of them are checked out (what changes inside one is not read here)."""
+    seen = hashlib.blake2b(digest_size=8)
+    missing = submodules = 0
     changed = None
     dirs = {b""}
     for rel, cached_mtime, cached_size, mode, skip in entries:
@@ -161,22 +173,24 @@ def worktree(path, entries):
             missing += 1
             continue
         if mode & 0o170000 == 0o160000:  # a submodule: its folder counts with the folders
-            folders = max(folders, st.st_mtime_ns)
+            seen.update(b"%d;" % st.st_mtime_ns)
+            submodules += os.path.lexists(os.path.join(path, rel, b".git"))
             continue
-        newest = max(newest, st.st_ctime_ns, st.st_mtime_ns)
+        seen.update(b"%d,%d,%d;" % (st.st_mtime_ns, st.st_ctime_ns, st.st_size))
         if st.st_mtime_ns != cached_mtime or st.st_size & 0xFFFFFFFF != cached_size:
             changed = max(changed or 0, int(st.st_mtime * 1000))
-    for d in dirs:
+    for d in sorted(dirs):
         full = os.path.join(path, d) if d else path
         try:
-            folders = max(folders, os.lstat(full).st_mtime_ns)
+            seen.update(b"%d;" % os.lstat(full).st_mtime_ns)
             with os.scandir(full) as it:  # the folders right below: where untracked files would appear
-                for e in it:
-                    if e.is_dir(follow_symlinks=False) and e.name != b".git" and (d + b"/" + e.name if d else e.name) not in dirs:
-                        folders = max(folders, e.stat(follow_symlinks=False).st_mtime_ns)
+                below = [(e.name, e.stat(follow_symlinks=False).st_mtime_ns) for e in it
+                         if e.is_dir(follow_symlinks=False) and e.name != b".git" and (d + b"/" + e.name if d else e.name) not in dirs]
+            for name, at in sorted(below):
+                seen.update(name + b"=%d;" % at)
         except OSError:
             missing += 1
-    return newest, folders, missing, changed
+    return seen.hexdigest(), missing, changed, submodules
 
 
 def probe(path, gitdir, common, cache):
@@ -205,9 +219,12 @@ def probe(path, gitdir, common, cache):
     entries = [] if data is None else index_entries(data, staged)
     if entries is None:
         return out
-    newest, folders, missing, changed = worktree(os.fsencode(path), entries)
+    seen, missing, changed, submodules = worktree(os.fsencode(path), entries)
     out["t"]["files"] = changed
-    out["fp"] = "|".join(str(x) for x in (out["oid"], out["upOid"], staged.hexdigest(), newest, folders, len(entries), missing, out["stash"], remote_stamp))
+    # ponytail: a checkout with a checked-out submodule gets no fingerprint, so git is asked for it at every check.
+    # Reading the submodule's own HEAD and index here would spare that; worth it once such repos are many.
+    if not submodules:
+        out["fp"] = "|".join(str(x) for x in (out["oid"], out["upOid"], staged.hexdigest(), seen, len(entries), missing, out["stash"], remote_stamp))
     return out
 
 
