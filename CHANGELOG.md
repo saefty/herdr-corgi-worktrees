@@ -6,6 +6,8 @@
   position of its own now, as every list Herdr ships has, and stays where you scrolled it. The other list starts
   at its top when you switch.
 - New commands for keys: `worktrees.scroll:top`, `worktrees.scroll:end` and `worktrees.scroll:<line>`.
+- Open in your editor finds IntelliJ IDEA installed as a snap on Linux (`intellij-idea-community`,
+  `intellij-idea-ultimate`).
 - README: the use cases start with the two the panel is for, seeing your open work in progress and opening a
   worktree in your editor.
 
