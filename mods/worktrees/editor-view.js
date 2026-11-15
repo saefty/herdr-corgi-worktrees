@@ -3,7 +3,7 @@
 // look at a folder, "Opening …" for three seconds, and a toast only when it did not open.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { exec, run, shared, setShared, readTextFile, openOverlay, closeOverlay, props, theme, home, notify } from "herdr";
+import { exec, run, shared, setShared, readTextFile, openOverlay, closeOverlay, props, theme, home, appHome, notify } from "herdr";
 import { NAME } from "./name.js";
 import * as E from "./editor.js";
 
@@ -19,7 +19,8 @@ const tilde = (p) => (p.startsWith(`${home()}/`) ? `~${p.slice(home().length)}` 
 
 // The mod's settings (model.js configOf): "editors", and "dryRun": a click starts nothing and notes the program and
 // its arguments in the mod's storage (key "opened", the newest twenty). For test homes: a stand-in `open` on the PATH
-// is not enough there, a window that runs with your own home folder can still reach the real one.
+// is not enough there. Herdr's exec runs with the PATH of your login shell, not with the one the window was started
+// with, so a window that runs with your own home folder reaches the real `open`.
 export const configure = (cfg) => { extra = E.extraEditors(cfg?.editors); dry = cfg?.dryRun === true; settled(); };
 const stored = () => { if (!known) { try { known = JSON.parse(localStorage.getItem(KEY) ?? "null"); } catch { known = null; } if (known && !Object.keys(known.found ?? {}).length) known = null; } return known; };
 
@@ -98,7 +99,9 @@ async function openIn(target, id = null) {
   const use = id ?? editorFor(target, null)?.id;
   const argv = use ? E.openArgv(use, found[use], file ? { file, line: target.line ?? null } : { dir: target.root }, extra) : null;
   if (!argv) return "No editor to open this in was found.";
-  if (dry) { try { localStorage.setItem("opened", JSON.stringify([...JSON.parse(localStorage.getItem("opened") ?? "[]"), [argv[0], ...argv[1]]].slice(-20))); } catch { /* none */ } return null; }
+  // The dry run: the mod's own setting, or a file "editor.dry-run" in the Herdr home (one file for every mod that
+  // opens editors; looked for at every click, a file read).
+  if (dry || await readTextFile(`${appHome()}/editor.dry-run`).then((x) => x !== null).catch(() => false)) { try { localStorage.setItem("opened", JSON.stringify([...JSON.parse(localStorage.getItem("opened") ?? "[]"), [argv[0], ...argv[1]]].slice(-20))); } catch { /* none */ } return null; }
   const r = await exec(argv[0], argv[1], { timeout: 20000 }).catch((e) => ({ code: 1, stderr: String(e) }));
   if (r.code === 0) return null;
   known = null; try { localStorage.removeItem(KEY); } catch { /* none */ } // it may be gone: look again the next time

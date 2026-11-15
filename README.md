@@ -186,7 +186,8 @@ Go to. `editors` adds editors of your own to "Open in your editor", or an editor
 in: `{ "id": "nvim", "name": "Neovim", "folder": ["my-terminal", "-e", "nvim", "{dir}"], "file": ["my-terminal", "-e",
 "nvim", "+{line}", "{file}"] }`; each is a program with its arguments, never a shell line. `"dryRun": true` is for
 trying the mod out in a second Herdr home: an editor link starts nothing and notes the program and its arguments in
-the mod's storage (`data/worktrees/store*.json`, key `opened`). After a change press ↻ in the panel.
+the mod's storage (`data/worktrees/store*.json`, key `opened`). A file named `editor.dry-run` in that Herdr home
+does the same. After a change press ↻ in the panel.
 
 ## Customize
 
