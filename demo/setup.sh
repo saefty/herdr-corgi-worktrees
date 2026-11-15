@@ -9,7 +9,7 @@
 #   run/app   a Herdr home with the mod, the worktrees-demo provider mod (PR marks, two contexts) and settings.
 #   run/stubs an `open` that writes its arguments to run/opened.txt (record.sh puts it first on the PATH), and in the
 #             stand-in home two empty app folders for VS Code and IntelliJ IDEA: "Open in your editor" finds both
-#             and never starts one.
+#             and never starts one. run/app/editor.dry-run turns the links into a dry run on top of that.
 # Then demo/record.sh opens a second Herdr window on it and takes the screenshots.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -123,6 +123,8 @@ JSON
 
 cp -R "$root/mods/worktrees" "$here/fixtures/worktrees-demo" "$app/mods/"
 printf '{ "roots": ["~/code"], "depth": 4 }\n' > "$app/worktrees.config.json"
+# One file for every mod with editor links: a click on "Open in <Editor>" starts nothing and says so.
+echo "demo: no editor is started" > "$app/editor.dry-run"
 printf '{ "appearance": "dark", "telemetry": false, "sounds": { "enabled": false }, "core": "%s" }\n' "$core" > "$app/settings.json"
 # Where the window opens: DEMO_BOUNDS="x y width height" (put it where your mouse is not, so no row shows a hover
 # in the shots; a second screen works well). Skip the welcome tour and the "Updated" pill.

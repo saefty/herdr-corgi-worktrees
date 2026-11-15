@@ -13,7 +13,7 @@ export HERDR_APP_HOME="$run/app"
 mkdir -p "$out" "$frames"
 
 # run/stubs first on the PATH: its `open` stands in for the real one, so an editor link never starts an editor
-HOME="$user" PATH="$run/stubs:$PATH" SHELL=/bin/zsh DO_NOT_TRACK=1 HERDR_TELEMETRY=0 \
+HOME="$user" HC_SESSION=wt-demo PATH="$run/stubs:$PATH" SHELL=/bin/zsh DO_NOT_TRACK=1 HERDR_TELEMETRY=0 \
   /Applications/Herdr.app/Contents/MacOS/Herdr > "$run/herdr.log" 2>&1 &
 until herdr-app status > /dev/null 2>&1; do sleep 1; done
 sleep 2
@@ -78,13 +78,20 @@ hist filter: 2
 panel 600; sleep 3; snap h-narrow; crop h-narrow "$out/history-narrow.png" "$((w - 536 - 1200 - 32)):$((h - 84 - 56)):536:84"
 panel 380
 
-# "Open in your editor": the Maven project's folder, one of its worktrees, a file. Nothing is started: run/stubs/open
-# writes what would have been (IntelliJ for the project, VS Code for the worktree and the file).
+# "Open in <Editor>": the branch card's links, the ▾ menu of a worktree's link, and what a click says. Nothing is
+# started: run/app/editor.dry-run makes every click a dry run, and run/stubs/open would catch what gets past it
+# (run/opened.txt stays empty).
 : > "$run/opened.txt"
-cmd "editor:$user/code/orbit-api" 4; cmd "editor:$user/.herdr/worktrees/orbit-api/agent-fix-timeouts" 4; cmd "editor:$user/code/docs-site/README.md:3" 4
-sed "s#$run#demo/run#g" "$run/opened.txt"
+panel 380; sleep 1
+cmd expand:orbit-api 8; snap editor-links; crop editor-links "$out/editor-links.png" "$col"
+cmd "editor:$user/.herdr/worktrees/orbit-api/agent-fix-timeouts" 0.3; herdr-app shot "$frames/editor-opening.png" > /dev/null
+crop editor-opening "$out/editor-opening.png" "$col"; sleep 4
+cmd "editor-menu:$user/.herdr/worktrees/orbit-api/agent-fix-timeouts" 2; herdr-app shot "$frames/editor-menu.png" > /dev/null
+crop editor-menu "$out/editor-menu.png" "1540:345:8:8"; do_ overlay.close   # the menu opens at the pointer; none is in the window, so at its top left
+cmd expand:orbit-api
+[ ! -s "$run/opened.txt" ] || { echo "an editor link got past the dry run:" >&2; sed "s#$run#demo/run#g" "$run/opened.txt" >&2; }
 
 [ -z "${KEEP:-}" ] || exit 0 # KEEP=1: leave the demo window open to try things
 do_ app.quit || true
-HOME="$user" hc server stop > /dev/null || true
+HOME="$user" HC_SESSION=wt-demo hc server stop > /dev/null || true
 ls -l "$root/preview.png" "$out"

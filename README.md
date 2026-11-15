@@ -59,6 +59,12 @@ It also answers these:
 
 ![One of two contexts shown](docs/screenshots/context.png)
 
+![The branch card's editor links: "VS ↗" on each worktree, "IntelliJ ↗ ▾" for the Maven project's folder](docs/screenshots/editor-links.png)
+
+![After a click the link says "Opening VS Code …"; the demo home makes it a dry run](docs/screenshots/editor-opening.png)
+
+![The ▾ menu of a worktree's link: the suggested editor, the other one, the project folder, Copy path](docs/screenshots/editor-menu.png)
+
 ## Features
 
 - Three lists: **Not pushed** (commits only on this machine), **Changed this week** (tracked files touched in the
