@@ -67,7 +67,9 @@ branch stays.
 - Contexts, PR marks, the published count and the Go to rows: PROVIDERS.md.
 
 **The history view** (the same mod, opened with props `{history: <checkout path>, name, branch, slug, context}`;
-"History ↗" does `tab.new {name: "History · <repo>", mod, props}`, or a window when no space is shown):
+"History ↗" does `tab.new {name: "History · <repo>", mod, props}`, or a window when no space is shown; when a tab
+of that name with this mod in it exists in any space, it selects that space and tab instead and sends
+`h-pick:<branch>`):
 - Header: the repo's name, a three-part switch "Branches | This branch · <name> | All commits", a filter field, "Load
   more" while git has more, ↻, and a dim line "as of 13:21 · 50 commits · base main · no fetch". Narrower than
   560 px the filter moves to a line of its own.
@@ -84,7 +86,11 @@ branch stays.
   one; lanes waiting for the same commit meet there. The base's tip has lane 0 reserved, so the main line is the
   left lane. A lane that ended is used again. Colors: every local branch gets one of six (`ansi1` … `ansi6`) by its
   name, in name order, the least used one when its own is taken (`palette`); the base's lane is `muted`.
-- A row is 26 px high. Lanes are 14 px apart (10 px narrow), lines 2 px (3 px for HEAD's, the picked and the shown
+- Lanes fit themselves (`graph.js laneFit`): 14 px apart (10 px narrow) while that takes no more room than ten
+  (eight) such lanes, then closer, down to 8 px (7 px); at most 16 lanes are drawn at once, and with more the
+  header shows "lanes 1–16 of 23 ◂ ▸" and the lane area rolls by eight. A bend to a lane outside that window is
+  drawn once per side and cut off at the edge.
+- A row is 26 px high. Lines are 2 px (3 px for HEAD's, the picked and the shown
   space's branch), bends are a box with two borders and one round corner of 8 px. Dots: 8 px filled; a merge 9 px
   hollow; HEAD 12 px with a foreground ring; a fold a 6 × 12 px outline. Then the chips, 18 px high, in the
   terminal font at 11 px: a branch with a 1 px border in its lane's color (`● ` when checked out, ` ⇄ origin`, ` ↑2`
@@ -92,7 +98,10 @@ branch stays.
   chips (2 narrow), then `+n`. Names longer than about 30 % of the width lose their middle (`middle`). Then the
   subject in 12.5 px, its Conventional Commit lead tinted (feat `ansi2`, fix `ansi1`, docs `ansi4`, perf `ansi5`,
   refactor `ansi6`, test `ansi3`, others dim), merged history in `muted`; then the 7-character hash, the author's
-  initials and the age. Narrow: no hash, no initials.
+  initials and the age, as one right-aligned monospace cell. Narrow: only the age.
+- What a row draws is prepared when the rows, the width, the picked branch, the PR data or the lane window change
+  (`prepare`: `graph.js shapes` gives the lane pieces, `placeChips` the chips' places): the list's renderer only
+  turns those numbers into elements, at most `rowElements(...)` of them (14 for an ordinary row, 27 with 16 lanes).
 - The rows are a `v_virtual_list`; a scrollbar is paired by name. A click selects the row and shows the details
   under the list: the full subject, hash · author · date, up to 6 lines of the message, up to 10 files as
   `+3 −1 path` from `git show --numstat`, "Open diff ↗" (`pane.split` down with `git show`) and ✕. A click on a
@@ -131,7 +140,12 @@ last pass. Settings: `worktrees.config.json` in the app home.
 - Never judge "merged" by ancestry: a squash merge leaves the branch unmerged.
 - Rows of a virtual list cannot register handlers (`on_click` throws there). The list has one `on_item_click`; to
   tell which chip was hit, the area notes the press's x and the chips have widths worked out from their text
-  (monospace font), so the same numbers draw and hit-test.
+  (monospace font), so the same numbers draw and hit-test (`placeChips`, `hitChip`, tested at three zooms).
+- `on_size_change` reports window px: sizes times the app's zoom (`settings().zoom`). Divide by it before
+  comparing with the mod's own px, or a threshold like "narrower than 560" moves with the zoom. A press's x is
+  made zoom-free by its ratio to the element's bounds (`pressX`).
+- A renderer that builds too much is cut off under load ("virtual list item renderer: interrupted"): count the
+  elements a row costs and keep a test on it.
 - Work out rows and lanes when the data, the view, the filter or a fold changes, never in `render`: a script
   slice is cut off after about 50 ms. 400 commits take about 2 ms here.
 - A view property must not share its name with a method (`this.history` and `history()`): the method wins.

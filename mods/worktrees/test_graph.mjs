@@ -143,6 +143,67 @@ assert.ok(allLanes.rows.length >= 400 && allLanes.width < 12, `width ${allLanes.
 assert.ok(ms < 40, `layout of ${big.length} commits took ${ms.toFixed(1)} ms`);
 console.log(`layout: ${big.length} commits, folded view ${bigNodes.length} rows, both views in ${ms.toFixed(2)} ms`);
 
+// ---- a filter folds the base's tip away: the base still has lane 0 and its plain color
+const filtered = G.plan(hist, G.shown(hist, { base: "m6", filter: "feat/x" }), new Set(), 1);
+assert.deepEqual(filtered.map((n) => (n.fold ? `fold(${n.fold})` : n.id)), ["f2", "fold(8)"]);
+assert.ok(filtered[1].hashes.has("m6"));
+const fl = G.lanes(filtered, { base: "m6" });
+assert.deepEqual([fl.rows.map((r) => r.lane), fl.rows[1].color, fl.rows[0].color >= 0], [[1, 0], -1, true]);
+
+// ---- how lanes fit, and rolling sideways
+assert.deepEqual(G.laneFit(3), { step: 14, shown: 3, offset: 0, width: 54, more: 0 });
+assert.deepEqual(G.laneFit(14), { step: 10, shown: 14, offset: 0, width: 152, more: 0 });       // more lanes: closer together, none cut off
+assert.deepEqual(G.laneFit(25, { offset: 99 }), { step: 8, shown: 16, offset: 9, width: 140, more: 9 }); // too many: a window of 16, rolled to the end
+assert.deepEqual(G.laneFit(25, { offset: -3 }).offset, 0);
+assert.deepEqual((({ step, shown }) => [step, shown])(G.laneFit(12, { narrow: true })), [7, 12]);
+assert.ok(G.laneFit(40, { narrow: true }).width <= 130 && G.laneFit(40).width <= 150);
+
+// ---- a row's pieces
+const pieces = (rows, nodes2, i, opt) => G.shapes(rows.rows[i], nodes2[i], opt).map((p) => `${p.t}${p.part ? `:${p.part}` : ""}${p.kind ? `:${p.kind}` : ""}@${p.lane ?? `${p.from}>${p.to}`}`);
+const mNodes = G.plan([c("m3", "m2 f1", "main"), c("f1", "m1"), c("m2", "m1"), c("m1")], new Set(["m3", "f1", "m2", "m1"]));
+const mRows = G.lanes(mNodes, { base: "m3" });
+assert.deepEqual(pieces(mRows, mNodes, 0), ["v:bottom@0", "out@0>1", "dot:merge@0"]);
+assert.deepEqual(pieces(mRows, mNodes, 1), ["v:all@0", "v:all@1", "dot:commit@1"]);   // straight through the dot: one piece, not two
+assert.deepEqual(pieces(mRows, mNodes, 3), ["v:top@0", "in@1>0", "dot:commit@0"]);
+assert.deepEqual(pieces(mRows, mNodes, 1, { offset: 1, shown: 1 }), ["v:all@0", "dot:commit@0"]); // rolled one lane to the right
+assert.deepEqual(pieces(mRows, mNodes, 2, { offset: 1, shown: 1 }), ["v:all@0"]);     // its own lane is out of the window: only the lane passing by
+assert.deepEqual(pieces(mRows, mNodes, 2, { offset: 2, shown: 1 }), []);
+assert.equal(G.shapes(mRows.rows[1], mNodes[1], { strong: new Set(["f1"]) }).find((p) => p.lane === 1 && p.t === "v").strong, true);
+assert.equal(G.shapes({ ...fl.rows[1] }, filtered[1]).at(-1).kind, "fold");
+
+// ---- rows stay cheap: a renderer that builds too much is cut off under load
+const cost = (commits, base, all) => {
+  const ns = G.plan(commits, G.shown(commits, { base, all })), ls = G.lanes(ns, { base }), fit = G.laneFit(ls.width);
+  return Math.max(...ns.map((n, i) => G.rowElements(G.shapes(ls.rows[i], n, fit).length, n.fold ? 0 : 4, { fold: Boolean(n.fold) })));
+};
+assert.ok(cost(big, "m400", false) <= 14 && cost(big, "m400", true) <= 14, `a row of the 400-commit repo: ${cost(big, "m400", true)} elements`);
+const wide = [...Array.from({ length: 30 }, (_, i) => c(`w${i}`, "m1", `feat/w-${i}`)), c("m1", "", "main")]; // 30 branches side by side
+assert.ok(cost(wide, "m1", true) <= 2 + (G.LANE_MAX + 2) + 4 + 3, `a row of a 30-lane repo: ${cost(wide, "m1", true)} elements`);
+assert.equal(G.rowElements(3, 2), 2 + 3 + 2 + 1 + 2);
+
+// ---- which chip a click hits: the places are the ones the chips are drawn at, at any zoom
+const placed = G.placeChips([{ kind: "branch", name: "feat/x", text: "● feat/x ⇄ origin ↑2" }, { kind: "pr", name: "feat/x", text: "#88 open" }, { kind: "tag", name: "v1", text: "◆ v1" }], 54);
+assert.equal(placed[0].x0, 54 + G.CHIP.gap);
+assert.deepEqual(placed.map((p) => p.x1 - p.x0), placed.map((p) => G.chipWidth(p.text)));
+assert.ok(placed.every((p, i) => i === 0 || p.x0 === placed[i - 1].x1 + G.CHIP.gap));
+assert.equal(G.chipWidth("#88 open"), Math.ceil(8 * G.CHIP.char) + G.CHIP.pad);
+const W = 900;
+for (const zoom of [0.9, 1, 1.25]) {
+  // events in window px (what the app sends: sizes times the zoom), and in the mod's own px: both must hit
+  for (const unit of [zoom, 1]) {
+    const at = (x) => G.hitChip(placed, G.pressX({ x: x * unit }, { width: W * unit }, W));
+    placed.forEach((p) => {
+      assert.equal(at((p.x0 + p.x1) / 2)?.text, p.text, `zoom ${zoom}: the middle of "${p.text}"`);
+      assert.equal(at(p.x0 + 0.5)?.text, p.text);
+      assert.equal(at(p.x1 - 0.5)?.text, p.text);
+      assert.equal(at(p.x1 + G.CHIP.gap / 2)?.text ?? null, null, `zoom ${zoom}: the gap after "${p.text}"`);
+    });
+    assert.equal(at(20), null);            // the lane area
+    assert.equal(at(placed[2].x1 + 40), null); // the subject
+  }
+}
+assert.equal(G.pressX({ x: 100 }, undefined, 900), 100);
+
 // ---- words
 assert.equal(G.middle("feat/short", 20), "feat/short");
 assert.equal(G.middle("feat/a-very-long-branch-name-that-says-everything-twice", 24), "feat/a-very-l…hing-twice");

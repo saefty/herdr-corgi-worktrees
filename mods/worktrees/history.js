@@ -4,7 +4,8 @@
 // branches fork or merge), then branch and tag chips, the subject, hash, author and age. The readable view is the
 // default: unmerged branches in full, plain merged history folded into "· 14 commits ·".
 // Local only: one `git log` and one `git for-each-ref`, nothing is fetched or written.
-// What to list and where each row draws is worked out in graph.js when the data or a choice changes, never in render.
+// What to list, where each row draws and what each row is made of is worked out in graph.js when the data or a
+// choice changes, never while the list scrolls: a row's renderer only turns prepared numbers into elements.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar, InputState, Input } from "gpui-base";
 import { theme, exec, run, spaces, home, settings, readTextFile, nextCommand } from "herdr";
@@ -15,16 +16,12 @@ import { prsNow, openPr, prWhere, openFolder } from "./hub.js";
 const ROW = 26;        // every row's height
 const MAX = 400;       // commits per load; "Load more" doubles it
 const NARROW_PX = 560; // narrower: no hash, no author, lanes closer together
-const MAX_LANES = 14;  // ponytail: lanes further right are cut off; a horizontal scroll if repos really get that wide
 const MODES = [["branches", "Branches", "Every local branch against the base: unmerged work in full, merged history folded."],
   ["branch", "This branch", "The picked branch and the base it forked from."],
   ["all", "All commits", "Every commit of every branch, remote branch and tag, nothing folded."]];
 const PALETTE = ["ansi1", "ansi2", "ansi3", "ansi4", "ansi5", "ansi6"]; // lane colors, by branch name
 const TYPES = { feat: "ansi2", fix: "ansi1", docs: "ansi4", perf: "ansi5", refactor: "ansi6", test: "ansi3" }; // Conventional Commit types
-// Chips are set in the terminal's monospace font with a width worked out from their text, so that a click's x
-// position tells which chip it hit: rows of a virtual list cannot carry click handlers of their own.
-const CHIP_PX = 11, CHAR_W = 6.7, CHIP_PAD = 14, GAP = 6;
-const chipW = (text) => Math.ceil([...text].reduce((w, ch) => w + (ch.charCodeAt(0) > 0x2000 ? 1.6 : 1), 0) * CHAR_W) + CHIP_PAD;
+const GAP = G.CHIP.gap;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const hhmm = (ms) => new Date(ms).toTimeString().slice(0, 5);
@@ -45,6 +42,7 @@ export default class History {
     this.filter = "";
     this.sel = -1;                  // the selected row
     this.pressX = 0;                // where in the list the last press was (see clickRow)
+    this.laneOffset = 0;            // the first lane shown, when there are more lanes than fit
     this.detail = null;             // {hash, data} of the commit whose details show
     this.commits = []; this.nodes = []; this.lanes = { rows: [], width: 0 }; this.unmerged = new Set();
     this.refs = new Map();          // branch name -> {upstream, ahead, behind, gone, worktree, current}
@@ -55,7 +53,8 @@ export default class History {
     this.input.on("submit", () => this.handle.focus());
     cx.spawn((cx) => this.load(cx));
     // Commands ("<mod>.h-…", for keys and scripts): h-mode:branches|branch|all, h-filter:<text>, h-select:<row | hash | branch>,
-    // h-unfold:<n | all>, h-more, h-refresh, h-esc, h-branch:<name>. "focus" comes from pane.go.
+    // h-unfold:<n | all>, h-more, h-refresh, h-esc, h-branch:<name>, h-pick:<branch>, h-lanes:next|prev.
+    // "focus" comes from pane.go.
     cx.spawn(async (cx) => { for (;;) { this.command(String(await nextCommand()), cx); cx.notify(); } });
     this.handle.focus();
   }
@@ -101,6 +100,7 @@ export default class History {
     // Commits the base does not have yet: their subjects stay bright, merged history is dimmed.
     const merged = this.baseTip ? G.reachable(this.commits, this.baseTip) : null;
     this.unmerged = new Set(merged ? this.commits.filter((c) => !merged.has(c.hash)).map((c) => c.hash) : []);
+    this.drawnSig = null; // the rows' pieces are prepared again on the next render
     this.layoutMs = Date.now() - started;
   }
 
@@ -125,9 +125,19 @@ export default class History {
     else if (name === "h-refresh") cx.spawn((cx) => this.load(cx));
     else if (name === "h-esc") this.escape();
     else if (name === "h-branch" && this.refs.has(arg)) this.openBranch(arg, cx);
+    else if (name === "h-pick" && arg) this.pickBranch(arg, cx);
+    else if (name === "h-lanes") this.laneOffset = Math.max(0, this.laneOffset + (arg === "prev" ? -1 : 1) * Math.ceil(G.LANE_MAX / 2));
   }
 
   loadMore(cx) { this.max *= 2; cx.spawn((cx) => this.load(cx)); }
+
+  // "History ↗" was clicked again for this repo, at another branch: that one is the picked branch now.
+  pickBranch(name, cx) {
+    this.picked = name;
+    if (this.mode === "branch") return cx.spawn((cx) => this.load(cx));
+    const i = this.nodes.findIndex((n) => n.commit?.refs.heads.includes(name));
+    if (i >= 0) { this.sel = i; this.scroll.scroll_to_item(i, "center"); }
+  }
 
   // A row's click or Enter: a fold opens, a commit shows its details (one `git show --numstat`).
   pick(i, cx) {
@@ -181,39 +191,8 @@ export default class History {
   // A branch's color: its lane's, or the one its name would get when it has no lane of its own.
   laneColor(name, t) { return this.tint(this.lanes.colors?.get(name) ?? G.colorOf(name), t); }
 
-  // The lanes of one row: absolutely placed lines, bends with a round corner, and the commit's dot.
-  graph(row, node, t, u) {
-    const mid = ROW / 2, x = (lane) => 8 + lane * u.lane, R = Math.min(8, u.lane - 3);
-    const pen = (e) => [this.tint(e.color, t), u.strong.has(e.name) ? 3 : 2];
-    const vline = (lane, top, height, [c, w]) => div().absolute().left(x(lane) - w / 2).top(top).w(0).h(height).border_l(w).border_color(c);
-    const els = [];
-    for (const th of row.through) els.push(vline(th.lane, 0, ROW, pen(th)));
-    for (const tp of row.top) {
-      const [c, w] = pen(tp);
-      if (tp.from === row.lane) { els.push(vline(row.lane, 0, mid, [c, w])); continue; }
-      // down the other lane to this row's middle, then across to the dot: the corner is on the other lane's side
-      const a = x(tp.from), b = x(row.lane);
-      const box = div().absolute().left(Math.min(a, b) - w / 2).top(0).w(Math.abs(a - b) + w).h(mid + w / 2).border_b(w).border_color(c);
-      els.push(a < b ? box.border_l(w).rounded_bl(R) : box.border_r(w).rounded_br(R));
-    }
-    for (const bt of row.bottom) {
-      const [c, w] = pen(bt);
-      if (bt.to === row.lane) { els.push(vline(row.lane, mid, ROW - mid, [c, w])); continue; }
-      // from the dot across to the other lane, then down: the corner is on the other lane's side
-      const a = x(row.lane), b = x(bt.to);
-      const box = div().absolute().left(Math.min(a, b) - w / 2).top(mid - w / 2).w(Math.abs(a - b) + w).h(ROW - mid + w / 2).border_t(w).border_color(c);
-      els.push(b > a ? box.border_r(w).rounded_tr(R) : box.border_l(w).rounded_tl(R));
-    }
-    const c = this.tint(row.color, t), at = x(row.lane);
-    if (node.fold) els.push(div().absolute().left(at - 3).top(mid - 6).w(6).h(12).rounded(3).border(1).border_color(t.dim).bg(t.background));
-    else if (node.commit.refs.head) els.push(div().absolute().left(at - 6).top(mid - 6).size(12).rounded_full().border(2).border_color(t.foreground).bg(c));
-    else if (node.parents.length > 1) els.push(div().absolute().left(at - 4.5).top(mid - 4.5).size(9).rounded_full().border(2).border_color(c).bg(t.background));
-    else els.push(div().absolute().left(at - 4).top(mid - 4).size(8).rounded_full().bg(c));
-    return div().relative().flex_none().w(u.graphW).h(ROW).overflow_hidden().children(els);
-  }
-
-  // Branch, tag and HEAD marks of a commit as data: [{kind, name, text, tip, w, x0, x1, pr}], x from the row's left
-  // edge. Never wrapped: long names lose their middle, the full one is in the tooltip and in the details.
+  // Branch, tag and HEAD marks of a commit as data: [{kind, name, text, tip, pr}]. Never wrapped: long names lose
+  // their middle, the full one is in the tooltip.
   chipSpecs(node, u) {
     const all = G.chips(node.commit.refs), out = [];
     for (const ch of all.slice(0, u.chips)) {
@@ -229,13 +208,45 @@ export default class History {
       else out.push({ ...ch, text: "HEAD", tip: "HEAD is detached at this commit." });
     }
     if (all.length > u.chips) out.push({ kind: "more", name: "", text: `+${all.length - u.chips}`, tip: all.slice(u.chips).map((ch) => ch.name).join(", ") });
-    let x = u.graphW + GAP;
-    for (const c of out) { c.w = chipW(c.text); c.x0 = x; c.x1 = x + c.w; x = c.x1 + GAP; }
     return out;
   }
 
+  // What every row is made of: its lane pieces, its chips with their places, its texts. Built when the rows or
+  // what they depend on (width, picked branch, PR data, lane window) changed, so that scrolling builds nothing.
+  prepare(u) {
+    const sig = [this.loadedAt, this.nodes.length, this.layoutMs, u.narrow, u.nameMax, u.chips, u.fit.step, u.fit.offset, u.fit.shown, [...u.strong].join(","), this.prsSig].join("|");
+    if (sig === this.drawnSig && this.drawn) return;
+    this.drawnSig = sig;
+    this.drawn = this.nodes.map((node, i) => {
+      const pieces = G.shapes(this.lanes.rows[i], node, { offset: u.fit.offset, shown: u.fit.shown, strong: u.strong });
+      if (node.fold) return { pieces };
+      const c = node.commit, s = G.conventional(c.subject);
+      return { pieces, chips: G.placeChips(this.chipSpecs(node, u), u.fit.width), lead: s.lead, type: s.type, rest: s.rest,
+        bright: !this.baseTip || c.hash === this.baseTip || this.unmerged.has(c.hash), meta: `${c.hash.slice(0, 7)}  ${G.initials(c.author).padEnd(2)}` };
+    });
+  }
+
+  // One piece of a row's lane area (graph.js shapes): a straight line, a bend with one round corner, or the dot.
+  piece(p, t, u) {
+    const mid = ROW / 2, x = (lane) => 8 + lane * u.fit.step, c = this.tint(p.color, t), w = p.strong ? 3 : 2, R = Math.min(8, u.fit.step - 3);
+    if (p.t === "v") return div().absolute().left(x(p.lane) - w / 2).top(p.part === "bottom" ? mid : 0).w(0).h(p.part === "all" ? ROW : p.part === "top" ? mid : ROW - mid).border_l(w).border_color(c);
+    if (p.t === "in") { // down the other lane to the row's middle, then across to the dot: the corner is on the other lane's side
+      const a = x(p.from), b = x(p.to), box = div().absolute().left(Math.min(a, b) - w / 2).top(0).w(Math.abs(a - b) + w).h(mid + w / 2).border_b(w).border_color(c);
+      return a < b ? box.border_l(w).rounded_bl(R) : box.border_r(w).rounded_br(R);
+    }
+    if (p.t === "out") { // from the dot across to the other lane, then down
+      const a = x(p.from), b = x(p.to), box = div().absolute().left(Math.min(a, b) - w / 2).top(mid - w / 2).w(Math.abs(a - b) + w).h(ROW - mid + w / 2).border_t(w).border_color(c);
+      return b > a ? box.border_r(w).rounded_tr(R) : box.border_l(w).rounded_tl(R);
+    }
+    const at = x(p.lane);
+    if (p.kind === "fold") return div().absolute().left(at - 3).top(mid - 6).w(6).h(12).rounded(3).border(1).border_color(t.dim).bg(t.background);
+    if (p.kind === "head") return div().absolute().left(at - 6).top(mid - 6).size(12).rounded_full().border(2).border_color(t.foreground).bg(c);
+    if (p.kind === "merge") return div().absolute().left(at - 4.5).top(mid - 4.5).size(9).rounded_full().border(2).border_color(c).bg(t.background);
+    return div().absolute().left(at - 4).top(mid - 4).size(8).rounded_full().bg(c);
+  }
+
   chip(spec, id, t, u) {
-    const el = div().id(id).flex_none().w(spec.w).h(18).flex().items_center().justify_center().rounded(9).font_family(u.mono).text_size(CHIP_PX).whitespace_nowrap().overflow_hidden().tooltip(spec.tip);
+    const el = div().id(id).flex_none().w(spec.w).h(G.CHIP.height).flex().items_center().justify_center().rounded(9).font_family(u.mono).text_size(G.CHIP.font).whitespace_nowrap().overflow_hidden().tooltip(spec.tip);
     if (spec.kind === "branch") { const strong = spec.head || u.strong.has(spec.name); return el.border(1).border_color(this.laneColor(spec.name, t)).text_color(strong ? t.foreground : t.muted).when(strong, (e) => e.font_semibold()).child(spec.text); }
     if (spec.kind === "pr") return el.text_color({ open: t.ansi2, draft: t.muted, merged: t.ansi5, closed: t.dim }[spec.pr.state] ?? t.muted).child(spec.text);
     if (spec.kind === "tag") return el.bg(t.surface).text_color(t.muted).child(spec.text);
@@ -244,33 +255,30 @@ export default class History {
   }
 
   // A click on a row (the list reports the row, the press before it where): a branch chip goes to that branch's
-  // space, a PR mark opens the PR, anything else picks the row.
+  // space, a PR mark opens the PR, anything else picks the row. The chips' places are the ones they were drawn at.
   clickRow(key, cx) {
     const i = this.nodes.findIndex((n) => n.id === key), node = this.nodes[i];
     if (!node) return;
     this.handle.focus();
-    const hit = node.commit && this.u ? this.chipSpecs(node, this.u).find((c) => this.pressX >= c.x0 && this.pressX < c.x1) : null;
+    const hit = G.hitChip(this.drawn?.[i]?.chips ?? [], this.pressX);
     if (hit?.kind === "branch") { this.sel = i; this.openBranch(hit.name, cx); }
     else if (hit?.kind === "pr") { this.sel = i; openPr(hit.pr, cx); }
     else this.pick(i, cx);
     cx.notify();
   }
 
+  // A row: nothing is worked out here (see prepare), and it is at most G.rowElements(...) elements.
   row(node, i, t, u) {
-    const sel = i === this.sel, lanes = this.graph(this.lanes.rows[i], node, t, u);
-    const el = h_flex().id(`h-${node.id}`).h(ROW).w_full().pr(10).gap(GAP).items_center().when(sel, (e) => e.bg(t.selected)).hover((s) => s.bg(sel ? t.selected : t.hover)).child(lanes);
-    if (node.fold) return el.tooltip("Plain history without a branch or tag on it. Click: list these commits.")
-      .child(div().text_size(11.5).text_color(t.dim).child(`· ${plural(node.fold, "commit")} ·`));
-    const c = node.commit, s = G.conventional(c.subject);
+    const d = this.drawn[i], sel = i === this.sel;
+    const el = h_flex().id(`h-${node.id}`).h(ROW).w_full().pr(10).gap(GAP).items_center().when(sel, (e) => e.bg(t.selected)).hover((s) => s.bg(sel ? t.selected : t.hover))
+      .child(div().relative().flex_none().w(u.fit.width).h(ROW).overflow_hidden().children(d.pieces.map((p) => this.piece(p, t, u))));
+    if (node.fold) return el.child(div().text_size(11.5).text_color(t.dim).child(`· ${plural(node.fold, "commit")} ·`));
     return el
-      .children(this.chipSpecs(node, u).map((spec, k) => this.chip(spec, `c-${node.id}-${k}`, t, u)))
-      .child(h_flex().flex_1().min_w(0).gap(5).text_size(12.5).overflow_hidden()
-        .when(Boolean(s.lead), (e) => e.child(div().min_w(0).truncate().text_color(t[TYPES[s.type]] ?? t.dim).child(s.lead)))
-        .child(div().flex_1().min_w(0).truncate().text_color(!this.baseTip || c.hash === this.baseTip || this.unmerged.has(c.hash) ? t.foreground : t.muted).child(s.rest)))
-      .when(!u.narrow, (e) => e
-        .child(div().flex_none().w(58).text_size(11).text_color(t.dim).child(c.hash.slice(0, 7)))
-        .child(div().id(`a-${node.id}`).flex_none().w(24).text_size(11).text_color(t.dim).tooltip(c.author).child(G.initials(c.author))))
-      .child(div().flex_none().w(34).text_size(11).text_color(t.dim).text_right().child(M.age(c.at, u.now)));
+      .children(d.chips.map((spec, k) => this.chip(spec, `c-${node.id}-${k}`, t, u)))
+      .when(Boolean(d.lead), (e) => e.child(div().min_w(0).max_w(170).truncate().text_size(12.5).text_color(t[TYPES[d.type]] ?? t.dim).child(d.lead)))
+      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(d.bright ? t.foreground : t.muted).child(d.rest))
+      .child(div().flex_none().w(u.narrow ? 34 : 136).font_family(u.mono).text_size(11).text_color(t.dim).text_right().whitespace_nowrap()
+        .child(u.narrow ? M.age(node.commit.at, u.now) : `${d.meta}  ${M.age(node.commit.at, u.now).padStart(4)}`));
   }
 
   details(t) {
@@ -300,15 +308,17 @@ export default class History {
 
   render(cx) {
     const t = theme();
-    const narrow = (this.width ?? Infinity) < NARROW_PX, lane = narrow ? 10 : 14;
+    const narrow = (this.width ?? Infinity) < NARROW_PX;
+    const fit = G.laneFit(Math.max(this.lanes.width, 1), { narrow, offset: this.laneOffset });
+    this.laneOffset = fit.offset;
     const focusBranch = spaces().find((s) => s.active)?.branch ?? null; // the shown space's branch
     const u = this.u = {
-      narrow, lane, now: Date.now(), prs: prsNow(this), mono: settings()?.font_family ?? "JetBrains Mono",
-      graphW: Math.min(Math.max(this.lanes.width, 1), MAX_LANES) * lane + 12,
+      narrow, fit, now: Date.now(), prs: prsNow(this), mono: settings()?.font_family ?? "JetBrains Mono",
       strong: new Set([this.head, this.picked, focusBranch].filter(Boolean)),
       // a branch chip may take up to about a third of the width: the subject keeps the larger share
-      nameMax: Math.max(16, Math.min(44, Math.floor(((this.width ?? 900) * (narrow ? 0.36 : 0.3)) / CHAR_W))), chips: narrow ? 2 : 3,
+      nameMax: Math.max(16, Math.min(44, Math.floor(((this.width ?? 900) * (narrow ? 0.36 : 0.3)) / G.CHIP.char))), chips: narrow ? 2 : 3,
     };
+    this.prepare(u);
     const nodes = this.nodes;
     const seg = h_flex().flex_none().p(2).gap(2).rounded(7).border(1).border_color(t.border).bg(t.surface)
       .children(MODES.map(([k, label, tip]) => div().id(`h-seg-${k}`).px(8).h(24).flex().items_center().rounded(5).text_size(11.5).whitespace_nowrap()
@@ -323,19 +333,24 @@ export default class History {
     const icon = (id, text, tip, click) => div().id(id).flex_none().px(6).h(24).flex().items_center().justify_center().rounded(5).text_size(12).text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => { click(cx); cx.notify(); }).child(text);
     return v_flex().id("history").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
-      .on_size_change((size, cx) => { this.width = size.width; cx.notify(); })
+      // the size comes in window px: divided by the zoom it is in the px this mod lays out with
+      .on_size_change((size, cx) => { this.width = size.width / (settings()?.zoom || 1); cx.notify(); })
       .size_full().min_h(0).bg(t.background).text_size(13)
       .child(v_flex().flex_none().p(10).gap(8).border_b(1).border_color(t.border)
         .child(h_flex().gap(8).items_center()
           .child(div().min_w(0).truncate().text_size(13).font_semibold().text_color(t.foreground).child(this.name))
           .child(seg)
           .child(narrow ? div().flex_1() : filter)
+          .when(fit.more > 0, (e) => e
+            .child(div().id("h-lanes").flex_none().text_size(11).text_color(t.dim).whitespace_nowrap().tooltip("This repo has more lanes than fit: roll sideways with the arrows.").child(`lanes ${fit.offset + 1}–${fit.offset + fit.shown} of ${this.lanes.width}`))
+            .child(icon("h-lanes-prev", "◂", "Lanes further left.", () => { this.laneOffset = Math.max(0, this.laneOffset - Math.ceil(G.LANE_MAX / 2)); }))
+            .child(icon("h-lanes-next", "▸", "Lanes further right.", () => { this.laneOffset += Math.ceil(G.LANE_MAX / 2); })))
           .when(this.more, (e) => e.child(icon("h-more", "Load more", `Only the newest ${this.commits.length} commits are listed. Click: twice as many.`, (cx) => this.loadMore(cx))))
           .child(icon("h-refresh", this.loading ? "…" : "↻", `Read the history again. Local only: nothing is fetched.${this.gitMs !== undefined ? ` Last time: git ${this.gitMs} ms, layout ${this.layoutMs} ms.` : ""}`, (cx) => cx.spawn((cx) => this.load(cx))).accessibility_label("Refresh history")))
         .when(narrow, (e) => e.child(filter))
         .child(div().text_size(11).text_color(this.error ? t.blocked : t.dim).truncate().child(state)))
       .child(div().id("h-list").flex_1().min_h(0).relative()
-        .on_mouse_down("left", (e) => { this.pressX = e.local_position?.x ?? 0; })
+        .on_mouse_down("left", (e) => { this.pressX = G.pressX(e.local_position ?? { x: 0 }, e.bounds, this.width ?? 0); })
         .when(!nodes.length && !this.loading, (e) => e.child(div().p(14).text_size(12).text_color(t.dim).child(this.error ? "No history to show." : this.filter ? "No commit matches." : "No commits yet.")))
         .child(v_virtual_list("h-rows", nodes.length, ROW, (i) => nodes[i].id, (range) => {
           this.vis = range;

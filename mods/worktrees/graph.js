@@ -90,7 +90,7 @@ export function shown(commits, { base = null, all = false, filter = "" } = {}) {
 }
 
 // Rows to draw: a node per shown commit, and one fold node per connected stretch of at least `minFold` hidden
-// commits between them ({id: "fold:<first hash>", fold: how many, parents}); a fold named in `open` is listed
+// commits between them ({id: "fold:<first hash>", fold: how many, hashes, parents}); a fold named in `open` is listed
 // commit by commit instead.
 // Parents are rewritten so that every node's parents are nodes below it (or commits git did not list).
 export function plan(commits, visible, open = new Set(), minFold = 3) {
@@ -115,7 +115,7 @@ export function plan(commits, visible, open = new Set(), minFold = 3) {
       if (open.has(id)) { for (const c of members) out.push([pos.get(c.hash), { id: c.hash, commit: c, parents: c.parents, unfolded: id }]); continue; }
       const mine = new Set(members.map((c) => c.hash));
       members.forEach((c) => owner.set(c.hash, id));
-      out.push([pos.get(members[0].hash), { id, fold: members.length, commit: null, parents: [...new Set(members.flatMap((c) => c.parents).filter((p) => !mine.has(p)))] }]);
+      out.push([pos.get(members[0].hash), { id, fold: members.length, hashes: mine, commit: null, parents: [...new Set(members.flatMap((c) => c.parents).filter((p) => !mine.has(p)))] }]);
     }
     nodes.push(...out.sort((a, b) => a[0] - b[0]).map(([, n]) => n));
     i = j;
@@ -156,7 +156,7 @@ export function palette(names, size = PALETTE) {
 //   through: lanes passing by, [{lane, name, color}]
 // width: how many lanes are used; colors: Map(lane name -> color).
 // colors (in): Map(branch name -> color) from `palette`; lanes without a branch get a free color as they come.
-// The base branch (`base`: its tip's node id) keeps lane 0 from the first row on. A lane that ended is used again
+// The base branch (`base`: its tip's commit) keeps lane 0 from the first row on. A lane that ended is used again
 // by the next branch that needs one, the leftmost first. A parent git did not list keeps its lane open to the end.
 export function lanes(nodes, { base = null, colors: given = null } = {}) {
   const by = new Map(nodes.map((n) => [n.id, n]));
@@ -173,7 +173,9 @@ export function lanes(nodes, { base = null, colors: given = null } = {}) {
     }
     return colors.get(name);
   };
-  if (base && by.has(base)) { const name = nameOf(by.get(base)); colors.set(name, -1); active[0] = { want: base, name, color: -1, fed: false }; }
+  // The base's lane: where its tip is listed, or the fold that holds it (a filter may have folded it away).
+  const baseNode = base ? by.get(base) ?? nodes.find((n) => n.hashes?.has(base)) ?? null : null;
+  if (baseNode) { const name = nameOf(baseNode); colors.set(name, -1); active[0] = { want: baseNode.id, name, color: -1, fed: false }; }
   let width = 0;
   const rows = nodes.map((node) => {
     const mine = waiting(node.id);
@@ -203,6 +205,74 @@ export function lanes(nodes, { base = null, colors: given = null } = {}) {
   });
   return { rows, width, colors };
 }
+
+// ---- drawing, as numbers ------------------------------------------------------------------------------------------
+
+// How the lanes fit: `step` px from lane to lane (closer together when there are many), and how many are `shown`
+// at once. More lanes than that are reached by rolling sideways (`offset`, kept in range here).
+export const LANE_MAX = 16; // lanes drawn at once: every lane costs elements in every row
+export function laneFit(lanes, { narrow = false, offset = 0 } = {}) {
+  const wide = narrow ? 10 : 14, tight = narrow ? 7 : 8, room = (narrow ? 8 : 10) * wide; // the width 8 or 10 roomy lanes take
+  const shown = Math.max(1, Math.min(lanes, LANE_MAX));
+  const step = Math.max(tight, Math.min(wide, Math.floor(room / shown)));
+  const off = Math.max(0, Math.min(offset, lanes - shown));
+  return { step, shown, offset: off, width: shown * step + 12, more: Math.max(0, lanes - shown) };
+}
+
+// What one row draws in its lane area, in the fewest pieces:
+//   {t: "v", lane, part: "all" | "top" | "bottom", color, strong}   a straight line
+//   {t: "in", from, to, color, strong}     from lane `from` above, bending into the node on lane `to`
+//   {t: "out", from, to, color, strong}    from the node on lane `from`, bending down into lane `to`
+//   {t: "dot", lane, kind: "commit" | "merge" | "head" | "fold", color}
+// Lanes are relative to `offset`; pieces wholly outside the `shown` lanes are left out. strong: lane names drawn stronger.
+export function shapes(row, node, { offset = 0, shown = Infinity, strong = null } = {}) {
+  const out = [], rel = (lane) => lane - offset, inside = (lane) => rel(lane) >= 0 && rel(lane) < shown;
+  const bold = (e) => Boolean(strong?.has(e.name));
+  for (const th of row.through) if (inside(th.lane)) out.push({ t: "v", lane: rel(th.lane), part: "all", color: th.color, strong: bold(th) });
+  const up = row.top.find((e) => e.from === row.lane), down = row.bottom.find((e) => e.to === row.lane);
+  if (inside(row.lane)) {
+    // straight through the node: one line when both halves look the same
+    if (up && down && up.color === down.color && bold(up) === bold(down)) out.push({ t: "v", lane: rel(row.lane), part: "all", color: up.color, strong: bold(up) });
+    else {
+      if (up) out.push({ t: "v", lane: rel(row.lane), part: "top", color: up.color, strong: bold(up) });
+      if (down) out.push({ t: "v", lane: rel(row.lane), part: "bottom", color: down.color, strong: bold(down) });
+    }
+  }
+  // Bends between the node and other lanes. Of the lanes on one side outside the window only the farthest is drawn:
+  // its horizontal run covers the others', and what lies outside is cut off anyway.
+  const bends = (list, other, make) => {
+    const far = { left: null, right: null };
+    for (const e of list) {
+      const o = other(e);
+      if (o === row.lane) continue;
+      if (inside(o)) out.push(make(e));
+      else if (inside(row.lane)) { const side = rel(o) < 0 ? "left" : "right"; if (!far[side] || Math.abs(o - row.lane) > Math.abs(other(far[side]) - row.lane)) far[side] = e; }
+    }
+    for (const e of [far.left, far.right]) if (e) out.push(make(e));
+  };
+  bends(row.top, (e) => e.from, (e) => ({ t: "in", from: rel(e.from), to: rel(row.lane), color: e.color, strong: bold(e) }));
+  bends(row.bottom, (e) => e.to, (e) => ({ t: "out", from: rel(row.lane), to: rel(e.to), color: e.color, strong: bold(e) }));
+  if (inside(row.lane)) out.push({ t: "dot", lane: rel(row.lane), kind: node.fold ? "fold" : node.commit?.refs.head ? "head" : node.parents.length > 1 ? "merge" : "commit", color: row.color });
+  return out;
+}
+
+// Chips are drawn in a monospace font with a width worked out from their text, so the same numbers place them
+// and tell which one a click hit (rows of a virtual list cannot carry click handlers of their own).
+export const CHIP = { font: 11, char: 6.7, pad: 14, gap: 6, height: 18 };
+export const chipWidth = (text) => Math.ceil([...text].reduce((w, ch) => w + (ch.codePointAt(0) > 0x2000 ? 1.6 : 1), 0) * CHIP.char) + CHIP.pad;
+// Gives every chip its place in the row: {..., w, x0, x1}, the first one `gap` right of the lane area (`left` px wide).
+export function placeChips(chips, left) {
+  let x = left + CHIP.gap;
+  return chips.map((c) => { const w = chipWidth(c.text), placed = { ...c, w, x0: x, x1: x + w }; x += w + CHIP.gap; return placed; });
+}
+export const hitChip = (placed, x) => placed.find((c) => x >= c.x0 && x < c.x1) ?? null;
+// A press's x in the mod's own px, whatever the app's zoom: events and element bounds come in the same unit, so
+// their ratio times the width the mod works with (already divided by the zoom) is zoom-free.
+export const pressX = (local, bounds, width) => (bounds?.width > 0 ? (local.x / bounds.width) * width : local.x);
+
+// How many elements a row costs: itself, the lane area, its pieces, its chips, and the text cells (type, subject,
+// the hash-author-age cell; a fold has one text). Rows are rebuilt on every frame of a scroll, so this stays small.
+export const rowElements = (pieces, chips, { fold = false, lead = true } = {}) => 2 + pieces + (fold ? 1 : chips + (lead ? 1 : 0) + 2);
 
 // ---- words -------------------------------------------------------------------------------------------------------
 

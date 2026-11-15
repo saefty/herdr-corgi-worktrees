@@ -72,6 +72,9 @@ never write to a repo.
 - Three ways to look: **Branches** (every local branch against the base, merged history folded), **This branch**
   (one branch and the base), **All commits** (everything, nothing folded). A filter narrows to commits whose
   subject or branch names contain the text.
+- A repo with more branches side by side than fit sets its lanes closer together; beyond sixteen the lane area
+  rolls sideways ("lanes 1–16 of 23 ◂ ▸"). Nothing is cut off.
+- "History ↗" for a repo whose history is already open goes to that tab instead of opening another.
 - A click on a commit shows its message, author, date and changed files with their line counts; "Open diff ↗" runs
   `git show` in a terminal pane. A click on a branch chip goes to that branch's space or worktree, on a pull
   request mark to the pull request. Arrow keys move, Enter opens, Esc closes.
@@ -183,8 +186,8 @@ one. `corgi diff worktrees` shows what you changed.
 
 - It never runs `git fetch`. "Behind" and a gone upstream are as fresh as your last fetch, and the panel says so.
 - It never writes: no push, commit, stash or branch delete. You act in the repo's space.
-- The history view is for reading: no checkout, rebase or cherry-pick from it. Lanes further right than the
-  fourteenth are cut off, and a commit git did not list (beyond "Load more") leaves its lane open at the bottom.
+- The history view is for reading: no checkout, rebase or cherry-pick from it. A commit git did not list (beyond
+  "Load more") leaves its lane open at the bottom.
 - "Not pushed" looks at the branch each checkout has checked out. Other branches with local commits show in the
   branch card.
 - The count for a bar is live only after the panel was shown once since the app started.

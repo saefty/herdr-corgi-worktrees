@@ -114,6 +114,8 @@ The history view has its own, so that a key reaches the right copy when both are
 | `h-select:<row number, hash or branch>` | a click on that row |
 | `h-unfold:<n>`, `h-unfold:all` | open the n-th fold from the top (0 is the first), or every one |
 | `h-branch:<name>` | a click on that branch's chip |
+| `h-pick:<branch>` | make that branch the picked one (what "History ↗" sends to a history that is already open) |
+| `h-lanes:next`, `h-lanes:prev` | roll the lane area sideways, when the repo has more lanes than fit |
 | `h-more`, `h-refresh`, `h-esc` | "Load more", ↻, Esc |
 
 **Opening the history view from another mod.** It is the same mod with props:

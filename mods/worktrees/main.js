@@ -9,7 +9,7 @@
 // rows in Go to; it publishes how many repos are not pushed.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, shared, setShared, exec, home, appHome, run, focused, layout, props, openOverlay, watchFolder, readTextFile, nextCommand } from "herdr";
+import { theme, shared, setShared, exec, home, appHome, run, focused, layout, props, settings, spaces, panes, openOverlay, watchFolder, readTextFile, nextCommand } from "herdr";
 import { NAME } from "./name.js";
 import { key, prsNow, openPr, prWhere, spaceMap, openFolder } from "./hub.js";
 import History from "./history.js";
@@ -138,7 +138,7 @@ export default class Worktrees extends View {
     else if (name === "family") { const r = hit(), key = r && M.family(r); if (key) { if (this.famOpen.has(key)) this.famOpen.delete(key); else this.famOpen.add(key); } }
     else if (name === "open") { const r = hit(); if (r) this.openSpace(r, cx); }
     else if (name === "pr") { const r = hit(), pr = r && M.prFor(this.prsNow(), r.slug, this.info[r.path]?.branch); if (pr) openPr(pr, cx); }
-    else if (name === "history") { const r = hit(); if (r) this.history(r.path); }
+    else if (name === "history") { const r = hit(); if (r) this.history(r.path, cx); }
     else if (name === "refresh") this.refresh(cx, arg === "all");
     else if (name === "tick") cx.spawn((cx) => this.pass(cx, "tick", this.inUse())); // what the timer does every five minutes
   }
@@ -399,13 +399,26 @@ export default class Worktrees extends View {
   // Its space, or a new one there.
   openSpace(repo, cx) { openFolder(repo.path, repo.context, cx, this.spaceOf); }
 
-  // The history view of a checkout (history.js), with its branch picked: a tab of its own in the shown space,
-  // or a window when there is no space to put a tab in.
-  history(path) {
+  // The history view of a repo (history.js), with the checkout's branch picked: a tab of its own in the shown
+  // space, or a window when there is no space to put a tab in. A history tab of this repo that is already open is
+  // gone to instead (and told the branch), in whatever space it is.
+  history(path, cx) {
     const repo = this.byPath.get(path);
     if (!repo) return;
-    const p = { history: path, name: repo.name, branch: this.info[path]?.branch ?? null, slug: repo.slug ?? null, context: repo.context ?? null };
-    if (focused()?.space) run("tab.new", { name: `History · ${repo.name}`, mod: NAME, props: p });
+    const branch = this.info[path]?.branch ?? null, root = this.byPath.get(M.family(repo)) ?? repo;
+    // the tab's name tells which repo it is: the folder too when another repo has the same name
+    const twin = this.repos.some((r) => r.name === repo.name && M.family(r) !== M.family(repo));
+    const title = `History · ${twin ? root.rel : repo.name}`;
+    const mine = new Set(panes().filter((p) => p.mod === NAME).map((p) => p.tab));
+    for (const s of spaces()) {
+      const tab = s.tabs.find((x) => x.name === title && mine.has(x.id));
+      if (!tab) continue;
+      run("space.select", { id: s.id }); run("tab.select", { id: tab.id });
+      if (branch) cx.timer.after(300, () => run(`${NAME}.h-pick:${branch}`));
+      return;
+    }
+    const p = { history: path, name: repo.name, branch, slug: repo.slug ?? null, context: repo.context ?? null };
+    if (focused()?.space) run("tab.new", { name: title, mod: NAME, props: p });
     else openOverlay({ mod: NAME, kind: "window", key: `${NAME}.history`, width: 980, height: 680, props: p });
   }
 
@@ -503,7 +516,7 @@ export default class Worktrees extends View {
     const link = (id, text, tip, click) => div().id(id).px(6).h(24).flex().items_center().rounded(5).text_size(11.5).text_color(t.muted)
       .hover((s) => s.bg(t.selected).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => { cx.stop_propagation(); click(cx); }).child(text);
     const foot = h_flex().gap(4).pt(2)
-      .child(link(`hist-${path}`, "History ↗", "Open this repo's history as a drawn tree, in a tab of its own.", () => this.history(path)))
+      .child(link(`hist-${path}`, "History ↗", "Open this repo's history as a drawn tree, in a tab of its own (or go to it when it is open).", (cx) => this.history(path, cx)))
       .child(link(`space-${path}`, "Open space ↗", "Go to this repo's space, or open one for it.", (cx) => this.openSpace(repo, cx)));
     const box = v_flex().id(`card-${path}`).ml(28).mr(4).mb(4).mt(2).p(6).gap(3).rounded(6).border(1).border_color(t.border).bg(t.surface)
       .on_click((_e, cx) => cx.stop_propagation()); // the card is not the row's "open space" target
@@ -615,7 +628,8 @@ export default class Worktrees extends View {
       asOf ? (this.prShown && this.prs.at ? `git as of ${asOf} · PRs as of ${stamp(this.prs.at)}` : `as of ${asOf} · local, no fetch`) : "",
       this.noProbe ? "no python3: slower checks" : ""].filter(Boolean).join(" · ");
     const last = this.passes?.full, pass = last ? ` Last check of all: ${plural(last.checkouts, "checkout")}, ${last.starts} ${last.starts === 1 ? "process" : "processes"} (git asked for ${last.git}), ${(last.ms / 1000).toFixed(1)} s.` : "";
-    return v_flex().id("root").on_size_change((size, cx) => { this.width = size.width; cx.notify(); }).size_full().min_h(0).bg(t.background).rounded(10).border(1).border_color(t.border).text_size(13)
+    // the size comes in window px: divided by the zoom it is in the px this mod lays out with
+    return v_flex().id("root").on_size_change((size, cx) => { this.width = size.width / (settings()?.zoom || 1); cx.notify(); }).size_full().min_h(0).bg(t.background).rounded(10).border(1).border_color(t.border).text_size(13)
       .child(v_flex().p(12).gap(8).border_b(1).border_color(t.border)
         .child(h_flex().gap(8).items_start().justify_between()
           .child(div().id("count").flex_1().min_w(0).tooltip(`Repos with commits only on this machine · checkouts with tracked changes from the last ${days} days · everything else that is not clean.`)
