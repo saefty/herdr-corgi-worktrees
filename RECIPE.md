@@ -1,6 +1,6 @@
 # Corgi · Worktrees
 
-See which of your git checkouts hold work that exists only on this machine: commits that were never pushed, changes you started this week, and what has been lying around for longer.
+See which of your git checkouts hold work that exists only on this machine, and read a repo's history as a drawn tree: branches as colored lanes, long names kept readable, merged history folded away.
 
 A side panel over every git checkout under the person's code folders and the worktrees agents work in. It answers
 one question when it opens: where is work that I could lose or forget? It reads git on disk only, never fetches,
@@ -56,10 +56,47 @@ branch stays.
   the upstream as gone.
 - Contexts, PR marks, the published count and the Go to rows: PROVIDERS.md.
 
-**Built from:** `mods/worktrees/main.js` (the view, the scan, the passes, the watches), `model.js` (pure:
-settings, git folders, contexts, groups, ages, PR index, the branch card, what Go to gets), `status.js` (pure: the
-porcelain v2 parser), `name.js` (the mod's name in one place), `mod.json` (`place: none`, and an overlay so
-`mod.open` shows it as a window). It uses `exec` for `find`, `git` and `stat`, `readTextFile` for `.git` files,
+**The history view** (the same mod, opened with props `{history: <checkout path>, name, branch, slug, context}`;
+"History ↗" does `tab.new {name: "History · <repo>", mod, props}`, or a window when no space is shown):
+- Header: the repo's name, a three-part switch "Branches | This branch · <name> | All commits", a filter field, "Load
+  more" while git has more, ↻, and a dim line "as of 13:21 · 50 commits · base main · no fetch". Narrower than
+  560 px the filter moves to a line of its own.
+- Data: `git for-each-ref refs/heads` (upstream, track, worktree, HEAD) and one
+  `git log --topo-order --decorate=full -z --format=%H%x1f%P%x1f%D%x1f%s%x1f%an%x1f%at -n 401`. Branches: `--branches
+  HEAD <base>`; This branch: `<branch> <base>`; All: `--exclude=refs/stash --all HEAD`. The base is origin's default
+  branch as a local branch, else `main` or `master`, else `origin/<default>`.
+- What is shown (`graph.js shown`): commits the base does not reach, commits with a branch, tag or HEAD, the commit
+  an unmerged branch forks from, and the base's tip. The rest is folded: each connected stretch of three or more
+  hidden commits becomes one row "· 14 commits ·" (`plan`), which a click lists. "All commits" folds nothing. A
+  filter shows only commits whose subject or ref names contain it and folds everything between.
+- Lanes (`graph.js lanes`): rows top to bottom. A row takes the lane that waits for it, else the leftmost free one;
+  its first parent goes straight down, further parents bend to the lane that already draws towards them or to a new
+  one; lanes waiting for the same commit meet there. The base's tip has lane 0 reserved, so the main line is the
+  left lane. A lane that ended is used again. Colors: every local branch gets one of six (`ansi1` … `ansi6`) by its
+  name, in name order, the least used one when its own is taken (`palette`); the base's lane is `muted`.
+- A row is 26 px high. Lanes are 14 px apart (10 px narrow), lines 2 px (3 px for HEAD's, the picked and the shown
+  space's branch), bends are a box with two borders and one round corner of 8 px. Dots: 8 px filled; a merge 9 px
+  hollow; HEAD 12 px with a foreground ring; a fold a 6 × 12 px outline. Then the chips, 18 px high, in the
+  terminal font at 11 px: a branch with a 1 px border in its lane's color (`● ` when checked out, ` ⇄ origin`, ` ↑2`
+  not pushed, ` ⧉` in another worktree), the PR mark, a remote branch dim, a tag `◆ v1.1` on `surface`. At most 3
+  chips (2 narrow), then `+n`. Names longer than about 30 % of the width lose their middle (`middle`). Then the
+  subject in 12.5 px, its Conventional Commit lead tinted (feat `ansi2`, fix `ansi1`, docs `ansi4`, perf `ansi5`,
+  refactor `ansi6`, test `ansi3`, others dim), merged history in `muted`; then the 7-character hash, the author's
+  initials and the age. Narrow: no hash, no initials.
+- The rows are a `v_virtual_list`; a scrollbar is paired by name. A click selects the row and shows the details
+  under the list: the full subject, hash · author · date, up to 6 lines of the message, up to 10 files as
+  `+3 −1 path` from `git show --numstat`, "Open diff ↗" (`pane.split` down with `git show`) and ✕. A click on a
+  branch chip goes to the space on the folder where that branch is checked out (else this checkout), on a PR mark
+  to the PR, on a fold opens it.
+- Keys (the mod is `focusable`): up and down move the selection (and the open details with it), Enter picks, Esc
+  closes the details, then clears the filter, then the selection.
+
+**Built from:** `mods/worktrees/main.js` (the panel, the scan, the passes, the watches), `history.js` (the history
+view), `hub.js` (what both share: PR providers, running a click's commands, spaces), `model.js` (pure: settings,
+git folders, contexts, groups, ages, PR index, the branch card, what Go to gets), `graph.js` (pure: the log parser,
+what to show, folds, lanes, colors, name shortening), `status.js` (pure: the porcelain v2 parser), `name.js` (the
+mod's name in one place), `mod.json` (`place: none`, `focusable`, and an overlay so `mod.open` shows the panel as a
+window). It uses `exec` for `find`, `git` and `stat`, `readTextFile` for `.git` files,
 `watchFolder`, `spaces() panes() layout()`, `nextCommand()`, and `localStorage` for the list of checkouts and the
 last pass. Settings: `worktrees.config.json` in the app home.
 
@@ -76,14 +113,26 @@ last pass. Settings: `worktrees.config.json` in the app home.
 - A stash belongs to the repo: every worktree reports it.
 - BSD `stat -f '%m %N'` and GNU `stat -c '%Y %n'` differ; try one, then the other.
 - Never judge "merged" by ancestry: a squash merge leaves the branch unmerged.
+- Rows of a virtual list cannot register handlers (`on_click` throws there). The list has one `on_item_click`; to
+  tell which chip was hit, the area notes the press's x and the chips have widths worked out from their text
+  (monospace font), so the same numbers draw and hit-test.
+- Work out rows and lanes when the data, the view, the filter or a fold changes, never in `render`: a script
+  slice is cut off after about 50 ms. 400 commits take about 2 ms here.
+- A view property must not share its name with a method (`this.history` and `history()`): the method wins.
+- Fold only connected stretches: two hidden commits next to each other in the list may belong to branches that
+  have nothing to do with each other, and one fold for both would draw a knot that is not there.
+- A mod's commands need a copy on screen, and a covered window draws nothing: scripts nudge the window first.
 
-**Done when:** `herdr-app check mods/worktrees` passes, `node --test mods/worktrees/test_model.mjs` passes, and
-in the demo the panel says "3 not pushed · 5 changed this week · 5 older", a commit in a repo changes the sentence
+**Done when:** `herdr-app check mods/worktrees` passes, `node --test mods/worktrees/test_model.mjs
+mods/worktrees/test_graph.mjs` passes, "History ↗" on `atlas-platform` in the demo shows main as the left lane
+with six branches beside it and folds like "· 9 commits ·", and
+in the demo the panel says "4 not pushed · 5 changed this week · 5 older", a commit in a repo changes the sentence
 without ↻, and `worktrees.expand:orbit-api` shows the
 stack `feat/login-flow` → `feat/login-tokens` and "merged, can go" at `fix/retry-old` and `chore/deps`.
 
 **Demo:** `demo/setup.sh` builds an invented setup in `demo/run` (ignored by git): a stand-in home with repos of
-`acme` under `~/code` and of `globex` under `~/code/client`, agents' worktrees under `~/.herdr/worktrees`, a bare
+`acme` under `~/code` (one of them, `atlas-platform`, with fifty commits, merged side branches, tags and very long
+branch names: `demo/fixtures/history-repo.sh`) and of `globex` under `~/code/client`, agents' worktrees under `~/.herdr/worktrees`, a bare
 repo per remote under `run/remotes` (pushed to once, then the origin URL is rewritten to read like GitHub's), its
 own herdr-core (socket `/tmp/herdr-worktrees-demo/core.sock`) and a Herdr home with the mod plus
 `demo/fixtures/worktrees-demo`. That mod is a PR provider (`control/prs.json`) and the context hook

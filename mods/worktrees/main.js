@@ -6,12 +6,14 @@
 // rows in Go to; it publishes how many repos are not pushed.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, shared, setShared, exec, home, appHome, run, spaces, panes, layout, props, window, watchFolder, readTextFile, nextCommand } from "herdr";
+import { theme, shared, setShared, exec, home, appHome, run, focused, layout, props, openOverlay, watchFolder, readTextFile, nextCommand } from "herdr";
 import { NAME } from "./name.js";
+import { key, prsNow, openPr, prWhere, spaceMap, openFolder } from "./hub.js";
+import History from "./history.js";
 import { parse } from "./status.js";
 import * as M from "./model.js";
+import { middle } from "./graph.js";
 
-const key = (k) => `${NAME}.${k}`; // this mod's shared keys
 const PARALLEL = 8;
 const RESCAN_MS = 30 * 60 * 1000;
 // ponytail: .git watches catch commits, checkouts, staging, pushes; plain edits in the work tree only show on this
@@ -25,7 +27,6 @@ const WEEK_ROWS = 8;   // "Changed this week" shows this many, then "Show n more
 const FAMILY_ROWS = 3; // "Not pushed" shows this many checkouts of one repo, then "Show n more of <repo>"
 const CARD_ROWS = 30;  // ponytail: a branch card lists the base and the newest branches; the rest is one count
 const STAT_CHUNK = 600;
-const STEP_MS = 150;   // between the commands of one click, so "show a panel" lands before "tell it something"
 const GIT = ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch", "--show-stash", "-z"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -40,6 +41,8 @@ const color = (t, name) => (name ? t[name] ?? name : t.dim); // a theme color na
 
 export default class Worktrees extends View {
   init(_props, cx) {
+    // A copy opened with props {history: <checkout path>, …} is the history view of that checkout (history.js).
+    if (props()?.history) { this.hist = new History(props(), cx); return; }
     if (shared(key("api"))?.version !== 1) setShared(key("api"), { version: 1 });
     this.cfg = M.configOf(null, home());
     this.show = localStorage.getItem("show") === "all" ? "all" : "needs";
@@ -85,7 +88,7 @@ export default class Worktrees extends View {
 
   // The last copy going (removed, quit): no rows in Go to that nobody would keep fresh.
   async close() {
-    if (shared(`goto.items.${NAME}`)) setShared(`goto.items.${NAME}`, null);
+    if (!this.hist && shared(`goto.items.${NAME}`)) setShared(`goto.items.${NAME}`, null);
   }
 
   setRepos(repos) {
@@ -102,25 +105,8 @@ export default class Worktrees extends View {
     return hook;
   }
 
-  // What the providers published (shared "<mod>.providers", "<mod>.prs.<provider>"), indexed again only when it changed.
-  prsNow() {
-    const docs = (shared(key("providers")) ?? []).map((p) => shared(key(`prs.${p}`))).filter(Boolean);
-    const sig = docs.map((d) => `${d.at}:${d.prs?.length}`).join("|");
-    if (sig !== this.prsSig) { this.prsSig = sig; this.prs = M.prIndex(docs); }
-    return this.prs;
-  }
-
-  // The commands of one click, in order.
-  runAll(list, cx) {
-    list.forEach(([name, args], i) => cx.timer.after(i * STEP_MS, () => run(name, args ?? {})));
-  }
-
-  // The same, through the context hook when one listens in this layout: its mod switches to the context first.
-  act(context, list, cx) {
-    const hook = shared("goto.context");
-    if (context && hook?.request && (!hook.layouts || hook.layouts.includes(shared("layout")))) setShared(hook.request, { context, run: list, at: Date.now() });
-    else this.runAll(list, cx);
-  }
+  // PR marks from the providers (hub.js prsNow).
+  prsNow() { return prsNow(this); }
 
   command(c, cx) {
     const [name, arg] = [c.split(":")[0], c.split(":").slice(1).join(":")];
@@ -131,7 +117,7 @@ export default class Worktrees extends View {
     else if (name === "more") this.moreWeek = !this.moreWeek;
     else if (name === "family") { const r = hit(), key = r && M.family(r); if (key) { if (this.famOpen.has(key)) this.famOpen.delete(key); else this.famOpen.add(key); } }
     else if (name === "open") { const r = hit(); if (r) this.openSpace(r, cx); }
-    else if (name === "pr") { const r = hit(), pr = r && M.prFor(this.prsNow(), r.slug, this.info[r.path]?.branch); if (pr) this.openPr(pr, cx); }
+    else if (name === "pr") { const r = hit(), pr = r && M.prFor(this.prsNow(), r.slug, this.info[r.path]?.branch); if (pr) openPr(pr, cx); }
     else if (name === "history") { const r = hit(); if (r) this.history(r.path); }
     else if (name === "refresh") this.refresh(cx);
   }
@@ -181,15 +167,17 @@ export default class Worktrees extends View {
 
   // One `git status` for a repo; a second process only for a branch that was never pushed (how many commits are on
   // no remote), asked once per HEAD. Returns how many processes ran.
-  async status(path) {
+  async status(path, again = false) {
     const repo = this.byPath.get(path);
     let s, runs = 1;
     try {
       const r = await exec("git", GIT, { cwd: path, timeout: 30000 });
       s = r.code === 0 ? parse(r.stdout) : { error: (r.stderr.trim().split("\n")[0] || `git ${r.code}`).slice(0, 120) };
     } catch (e) {
-      // git did not answer (a timeout on a busy machine): what was known before stays, rather than an error row.
+      // git did not answer (a timeout on a busy machine): what was known before stays, and a checkout nothing is
+      // known about yet is asked once more at the end of the pass, rather than listed as an error.
       if (this.info[path] && !this.info[path].error) return runs;
+      if (!again) return runs;
       s = { error: String(e).slice(0, 120) };
     }
     if (repo?.main && s.stash) s.stash = 0; // the stash belongs to the repo: shown there, not again at each of its worktrees
@@ -255,6 +243,7 @@ export default class Worktrees extends View {
       await Promise.all(Array.from({ length: PARALLEL }, async () => {
         for (let p; (p = queue.shift());) { const n = await this.status(p); runs += n; this.checked++; }
       }));
+      for (const p of paths) if (!this.info[p]) runs += await this.status(p, true); // the ones git did not answer for, one at a time
       runs += await this.ages(paths);
     } finally { this.running = false; } // whatever fails, the next pass may start
     this.checkedAt = Date.now();
@@ -276,16 +265,9 @@ export default class Worktrees extends View {
     if (beat || !this.beaten || JSON.stringify(n) !== JSON.stringify(old)) { this.beaten = true; setShared(key("count"), { ...n, at: Date.now() }); }
     if (!shared("goto.api")) return;
     const g = M.groups(M.inView(this.repos, hook), this.info, this.times, Date.now(), this.cfg.weekDays * M.DAY);
-    const items = this.cfg.goto ? M.gotoItems(g, this.spaceMap()) : null;
+    const items = this.cfg.goto ? M.gotoItems(g, spaceMap(new Set(this.repos.map((r) => r.path)))) : null;
     if (items && !(shared("goto.providers") ?? []).includes(NAME)) setShared("goto.providers", [...(shared("goto.providers") ?? []), NAME]);
     if (JSON.stringify(items) !== JSON.stringify(shared(`goto.items.${NAME}`) ?? null)) setShared(`goto.items.${NAME}`, items);
-  }
-
-  // Which checkouts have a space: its folder, or a terminal of it, is inside. Map(path -> space id).
-  spaceMap() {
-    const ps = panes();
-    return M.spaceRepos(new Set(this.repos.map((r) => r.path)), spaces().filter((s) => !s.machine)
-      .map((s) => ({ id: s.id, paths: [s.folder, ...ps.filter((p) => s.tabs.some((tab) => tab.id === p.tab)).map((p) => p.cwd)].filter(Boolean) })));
   }
 
   // Re-check a repo when its .git changes. A worktree's git folder lies inside its repo's .git, so that repo's watch
@@ -335,23 +317,16 @@ export default class Worktrees extends View {
   }
 
   // Its space, or a new one there.
-  openSpace(repo, cx) {
-    const id = this.spaceOf.get(repo.path);
-    this.act(repo.context, id ? [["space.select", { id }]] : [["space.new", { folder: repo.path, machine: "" }]], cx);
-  }
+  openSpace(repo, cx) { openFolder(repo.path, repo.context, cx, this.spaceOf); }
 
-  // A PR mark's click: what its provider says (`run`), else the PR review mod when it is there (its hand-over
-  // "pr.goto"), else the browser.
-  openPr(pr, cx) {
-    if (pr.run) this.runAll(pr.run, cx);
-    else if (pr.url && shared("review.layout")) setShared("pr.goto", { url: pr.url });
-    else if (pr.url) exec(window()?.platform === "macos" ? "open" : "xdg-open", [pr.url]).catch(() => null);
-  }
-
-  // The whole history as git draws it, in a pane under the focused one. less stays open (git's default would quit
-  // on a short log and close the pane at once).
+  // The history view of a checkout (history.js), with its branch picked: a tab of its own in the shown space,
+  // or a window when there is no space to put a tab in.
   history(path) {
-    run("pane.split", { direction: "down", argv: ["git", "-C", path, "-c", "core.pager=less -+F -R", "log", "--graph", "--oneline", "--decorate", "--all"] });
+    const repo = this.byPath.get(path);
+    if (!repo) return;
+    const p = { history: path, name: repo.name, branch: this.info[path]?.branch ?? null, slug: repo.slug ?? null, context: repo.context ?? null };
+    if (focused()?.space) run("tab.new", { name: `History · ${repo.name}`, mod: NAME, props: p });
+    else openOverlay({ mod: NAME, kind: "window", key: `${NAME}.history`, width: 980, height: 680, props: p });
   }
 
   toggle(path, cx) {
@@ -384,10 +359,9 @@ export default class Worktrees extends View {
   prMark(id, pr, t) {
     this.prShown = true;
     const tone = { open: t.ansi2, draft: t.muted, merged: t.ansi5, closed: t.dim }[pr.state] ?? t.muted;
-    const where = pr.run ? "open it" : !pr.url ? "nothing to open" : shared("review.layout") ? "open it in PR review" : "open it in the browser";
     return div().id(id).flex_none().px(4).rounded(4).text_color(tone).hover((s) => s.bg(t.selected))
-      .tooltip(`Pull request ${pr.repo}#${pr.number} (${pr.state})${this.prs.at ? `, as of ${stamp(this.prs.at)}` : ""}. Click: ${where}.`)
-      .on_click((_e, cx) => { cx.stop_propagation(); this.openPr(pr, cx); }).child(M.prLabel(pr));
+      .tooltip(`Pull request ${pr.repo}#${pr.number} (${pr.state})${this.prs.at ? `, as of ${stamp(this.prs.at)}` : ""}. Click: ${prWhere(pr)}.`)
+      .on_click((_e, cx) => { cx.stop_propagation(); openPr(pr, cx); }).child(M.prLabel(pr));
   }
 
   marks(x, t) {
@@ -413,7 +387,8 @@ export default class Worktrees extends View {
     const branch = s?.error ?? (s?.detached ? `detached ${(s.oid ?? "").slice(0, 7)}` : s?.branch ?? "");
     const facts = [
       two && repo.kind !== "repo" ? word(repo.kind === "agent" ? "agent worktree" : "worktree", t.ansi6) : null,
-      (two ? div().max_w(250) : div().min_w(0)).truncate().text_color(s?.error ? t.blocked : t.muted).child(branch),
+      // a long branch name loses its middle, so that both ends stay readable
+      (two ? div().max_w(260) : div().min_w(0)).truncate().text_color(s?.error ? t.blocked : t.muted).child(two && !s?.error ? middle(branch, 38) : branch),
       two && s && !s.error && !s.upstream && M.unpushed(repo, s) ? word("never pushed", t.ansi3) : null,
       !repo.hasRemote ? word("no remote") : null,
       pr ? this.prMark(`pr-${path}`, pr, t) : null,
@@ -448,7 +423,7 @@ export default class Worktrees extends View {
     const link = (id, text, tip, click) => div().id(id).px(6).h(24).flex().items_center().rounded(5).text_size(11.5).text_color(t.muted)
       .hover((s) => s.bg(t.selected).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => { cx.stop_propagation(); click(cx); }).child(text);
     const foot = h_flex().gap(4).pt(2)
-      .child(link(`hist-${path}`, "History ↗", "Open `git log --graph --oneline --all` for this repo in a pane below the focused one.", () => this.history(path)))
+      .child(link(`hist-${path}`, "History ↗", "Open this repo's history as a drawn tree, in a tab of its own.", () => this.history(path)))
       .child(link(`space-${path}`, "Open space ↗", "Go to this repo's space, or open one for it.", (cx) => this.openSpace(repo, cx)));
     const box = v_flex().id(`card-${path}`).ml(28).mr(4).mb(4).mt(2).p(6).gap(3).rounded(6).border(1).border_color(t.border).bg(t.surface)
       .on_click((_e, cx) => cx.stop_propagation()); // the card is not the row's "open space" target
@@ -490,6 +465,7 @@ export default class Worktrees extends View {
   }
 
   render(cx) {
+    if (this.hist) return this.hist.render(cx);
     const t = theme();
     const shown = shownNow();
     this.compact = (this.width ?? Infinity) < COMPACT_PX;
@@ -507,7 +483,7 @@ export default class Worktrees extends View {
     const body = [];
     let g = null;
     if (shown) { // hidden: nothing below the header is worked out
-      this.spaceOf = this.spaceMap();
+      this.spaceOf = spaceMap(new Set(this.repos.map((r) => r.path)));
       // During the very first pass ages are still missing (they come last): everything counts as not checked yet,
       // rather than listed in a group it will leave a moment later.
       g = M.groups(mine, this.checkedAt ? this.info : {}, this.times, Date.now(), days * M.DAY);

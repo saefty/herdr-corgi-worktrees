@@ -98,10 +98,33 @@ the last copy of Worktrees closes, it sets `goto.items.worktrees` to `null`.
 | `expand:<repo>` | open or close a row's branch card |
 | `open:<repo>` | a row's click: its space, or a new one there |
 | `pr:<repo>` | a click on the row's PR mark |
-| `history:<repo>` | the card's "History ↗": `git log --graph` in a pane below the focused one |
+| `history:<repo>` | the card's "History ↗": the repo's history view, as a tab of its own |
 | `older`, `more`, `family:<repo>` | fold or unfold "Older or untracked only", "Show n more", and one repo's worktrees |
 
 `<repo>` is a checkout's path, its path below its root, or its name.
+
+The history view has its own, so that a key reaches the right copy when both are on screen:
+
+| Command | Does |
+|---|---|
+| `h-mode:branches`, `h-mode:branch`, `h-mode:all` | the three views |
+| `h-filter:<text>` | the filter (empty: none) |
+| `h-select:<row number, hash or branch>` | a click on that row |
+| `h-unfold:<n>`, `h-unfold:all` | open the n-th fold from the top (0 is the first), or every one |
+| `h-branch:<name>` | a click on that branch's chip |
+| `h-more`, `h-refresh`, `h-esc` | "Load more", ↻, Esc |
+
+**Opening the history view from another mod.** It is the same mod with props:
+
+```js
+run("tab.new", { name: "History · bookshelf", mod: "worktrees", props: {
+  history: "/abs/path/to/the/checkout",   // required
+  name: "bookshelf",                      // optional: the title
+  branch: "feat/due-reminders",           // optional: what "This branch" means, drawn stronger
+  slug: "octo/bookshelf",                 // optional: owner/name, for PR marks
+  context: "blue",                        // optional: for opening spaces through the context hook
+} });
+```
 
 ## 5. Settings: `worktrees.config.json` (in the Herdr app home)
 
@@ -132,4 +155,4 @@ All keys optional; the values below are the defaults.
 - Required: `git`, and the standard tools `find` and `stat` (BSD or GNU).
 - The bars in the branch card need git 2.41 or newer (`for-each-ref %(ahead-behind:…)`). With an older git the
   card lists the branches without bars.
-- "History ↗" uses git's pager, `less`.
+- "Open diff ↗" in the history view uses git's pager, `less`.

@@ -1,15 +1,17 @@
 # Corgi · Worktrees for Herdr
 
-<h3 align="center">See which of your git checkouts hold work that exists only on this machine: commits that were never pushed, changes you started this week, and what has been lying around for longer.</h3>
+<h3 align="center">See which of your git checkouts hold work that exists only on this machine, and read a repo's history as a drawn tree: branches as colored lanes, long names kept readable, merged history folded away.</h3>
 
-<p align="center"><img src="preview.png" width="88%" alt="The panel with three repos not pushed and one repo's branch card open" /></p>
+<p align="center"><img src="preview.png" width="88%" alt="A repo's history as a drawn tree next to the Herdr sidebar" /></p>
 
 <p align="center"><sub>✓&nbsp;Free,&nbsp;MIT &nbsp;·&nbsp; ✓&nbsp;Runs&nbsp;locally,&nbsp;never&nbsp;fetches &nbsp;·&nbsp; ✓&nbsp;herdr-app&nbsp;0.1.15+</sub></p>
 
 Part of [Corgi](https://github.com/saefty/herdr-corgi), a set of Herdr mods that plug into each other.
 
-A side panel for Herdr over every git checkout under your code folders, including the worktrees agents work in.
-It reads git on your disk and nothing else: it never fetches, and it never writes to a repo.
+Two views for Herdr. A side panel over every git checkout under your code folders, including the worktrees agents
+work in. And a history view of one repo, drawn instead of typed: no `git log --graph` in a terminal with lines made
+of characters and branch names that wrap. Both read git on your disk and nothing else: they never fetch, and they
+never write to a repo.
 
 ## Use cases
 
@@ -23,8 +25,23 @@ It reads git on your disk and nothing else: it never fetches, and it never write
 - **What can go?** Open a row and its branch card shows every local branch against main: ahead, behind, its age,
   its worktree, its pull request. "merged, can go" appears only with proof.
 - **Go there.** A click on a row goes to the space that is open on that checkout, or opens one.
+- **What happened on this branch?** "History ↗" opens the repo's history as a tree. Unmerged branches are shown
+  commit by commit, each in its own color; the main line is the left lane; plain merged history is folded into
+  "· 14 commits ·" until you click it.
 
 ## Screenshots
+
+![The history view: every unmerged branch against main, merged history folded](docs/screenshots/history.png)
+
+![A commit picked: its message, author, date and changed files](docs/screenshots/history-details.png)
+
+![All commits: merged side branches drawn with their bends](docs/screenshots/history-all.png)
+
+![This branch: one branch and the base it forked from](docs/screenshots/history-branch.png)
+
+![Filtered by "checkout"](docs/screenshots/history-filter.png)
+
+![The history view in a narrow pane: no hash, no author, lanes closer together](docs/screenshots/history-narrow.png)
 
 ![The list at 380 px: Not pushed, Changed this week, and the folded rest](docs/screenshots/needs-me.png)
 
@@ -32,11 +49,7 @@ It reads git on your disk and nothing else: it never fetches, and it never write
 
 ![Every checkout by folder](docs/screenshots/all.png)
 
-![The folded group opened: old changes, untracked files, behind, a stash, no remote](docs/screenshots/older.png)
-
 ![One of two contexts shown](docs/screenshots/context.png)
-
-![The history pane and the branch card](docs/screenshots/history.png)
 
 ## Features
 
@@ -49,7 +62,20 @@ It reads git on your disk and nothing else: it never fetches, and it never write
 - A repo and its worktrees count as one repo; a repo with many unpushed worktrees shows its newest and one line
   for the rest.
 - The branch card (▸ on a row): one `git for-each-ref` for that repo only. Branches stacked on each other are
-  indented. "History ↗" opens `git log --graph` in a pane, "Open space ↗" goes there.
+  indented. "History ↗" opens the history view with the row's branch picked, "Open space ↗" goes there.
+- The history view: one row per commit. On the left a lane per branch in a color of its own (always the same for
+  that branch), a dot per commit, a round bend where branches fork and merge; HEAD and the picked branch are drawn
+  stronger. Then chips for branches and tags (`feat/x ⇄ origin` when the remote branch is on the same commit, the
+  pull request, `⧉` for a branch checked out in another worktree), the subject with its Conventional Commit type
+  tinted, the short hash, the author's initials and the age. Long branch names lose their middle, never their ends,
+  and never wrap; the full name is in the tooltip.
+- Three ways to look: **Branches** (every local branch against the base, merged history folded), **This branch**
+  (one branch and the base), **All commits** (everything, nothing folded). A filter narrows to commits whose
+  subject or branch names contain the text.
+- A click on a commit shows its message, author, date and changed files with their line counts; "Open diff ↗" runs
+  `git show` in a terminal pane. A click on a branch chip goes to that branch's space or worktree, on a pull
+  request mark to the pull request. Arrow keys move, Enter opens, Esc closes.
+- The history lists the newest 400 commits at first ("Load more" doubles it), from one `git log`.
 - "All" lists every checkout by folder, clean ones included.
 - Cheap by design: one `git status` per checkout in a pass, one `stat` for all file times, a watch on each
   `.git` so commits and pushes show without a pass. Full passes run only while the panel is shown.
@@ -70,7 +96,8 @@ Worktrees, [Go to](https://github.com/saefty/herdr-corgi-goto) and [PR review](h
 
 ## What's in here
 
-- `mods/worktrees/`: the mod. `main.js` is the view, `model.js` and `status.js` are the logic without any UI.
+- `mods/worktrees/`: the mod. `main.js` is the panel and `history.js` the history view; `model.js`, `status.js`
+  and `graph.js` (lanes, folds) are the logic without any UI, each with its tests.
 - `RECIPE.md`: the brief to build it from scratch.
 - `demo/`: an invented setup for the screenshots.
 
@@ -83,7 +110,7 @@ A mod can't install programs. Everything the panel runs is on a developer machin
 | `git` | everything: status, branches, the history pane | `brew install git` (or Xcode's) | `sudo apt install git` |
 | `git` 2.41 or newer (optional) | the bars in the branch card (ahead of and behind main); an older git lists the branches without them | `brew upgrade git` | your distribution's newer package |
 | `find`, `stat` | finding checkouts, file times for "this week" | part of macOS | part of coreutils and findutils |
-| `less` (optional) | "History ↗": git's pager keeps the pane open; without it the pane closes at once | part of macOS | `sudo apt install less` |
+| `less` (optional) | "Open diff ↗" in the history view: git's pager keeps the pane open; without it the pane closes at once | part of macOS | `sudo apt install less` |
 
 It needs no network, no `gh` and no login. Pull request marks come from other mods, not from a program here.
 The demo scripts (`demo/`) also use `node` and `ffmpeg`; the mod doesn't.
@@ -150,13 +177,15 @@ one. `corgi diff worktrees` shows what you changed.
 
 - It never runs `git fetch`. "Behind" and a gone upstream are as fresh as your last fetch, and the panel says so.
 - It never writes: no push, commit, stash or branch delete. You act in the repo's space.
+- The history view is for reading: no checkout, rebase or cherry-pick from it. Lanes further right than the
+  fourteenth are cut off, and a commit git did not list (beyond "Load more") leaves its lane open at the bottom.
 - "Not pushed" looks at the branch each checkout has checked out. Other branches with local commits show in the
   branch card.
 - The count for a bar is live only after the panel was shown once since the app started.
 
 ## Tests
 
-`node --test mods/worktrees/test_model.mjs`
+`node --test mods/worktrees/test_model.mjs mods/worktrees/test_graph.mjs`
 
 ## For mod authors
 

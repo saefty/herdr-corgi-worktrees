@@ -1,7 +1,8 @@
 #!/bin/sh
 # Builds the demo in demo/run (recreated on every run, ignored by git):
 #   run/user  a stand-in home. ~/code holds invented repos with branches, a stash, unpushed commits, old and new
-#             changes; ~/.herdr/worktrees holds agents' worktrees of two of them. Each repo pushes to a bare repo
+#             changes, and one with a longer history (fixtures/history-repo.sh); ~/.herdr/worktrees holds agents'
+#             worktrees of three of them. Each repo pushes to a bare repo
 #             under run/remotes once, then its origin URL is rewritten to read like GitHub's: nothing here ever
 #             talks to the network. herdr-core's config points this home at its own core, so the demo never
 #             shares terminals with yours (socket /tmp/herdr-worktrees-demo/core.sock: socket paths must be short).
@@ -90,12 +91,18 @@ echo "edit" >> README.md; touch -t "$(ago 2d)" README.md; github globex/recipe-b
 new "$code/client/photo-sorter" globex/photo-sorter
 echo "later" >> README.md; git stash -q; github globex/photo-sorter; old 8w
 
+# a repo with a longer history, for the history view: merged side branches, tags, long branch names, a stack
+sh "$here/fixtures/history-repo.sh" "$code/atlas-platform" "$remotes" "$wt"
+
 # PR data as a provider would publish it (invented): worktrees-demo reads this file
 cat > "$app/control/prs.json" <<JSON
 [ { "repo": "acme/orbit-api", "branch": "feat/login-flow", "number": 412, "state": "draft", "base": "main", "url": "https://github.com/acme/orbit-api/pull/412" },
   { "repo": "acme/orbit-api", "branch": "feat/login-tokens", "number": 413, "state": "open", "base": "feat/login-flow", "url": "https://github.com/acme/orbit-api/pull/413" },
   { "repo": "acme/orbit-api", "branch": "fix/retry-old", "number": 398, "state": "merged", "base": "main", "headSha": "$merged", "url": "https://github.com/acme/orbit-api/pull/398" },
   { "repo": "acme/billing-worker", "branch": "feat/invoices", "number": 7, "state": "open", "base": "main", "url": "https://github.com/acme/billing-worker/pull/7" },
+  { "repo": "acme/atlas-platform", "branch": "feature/checkout-redesign-with-saved-payment-methods-and-address-book", "number": 88, "state": "open", "base": "main", "url": "https://github.com/acme/atlas-platform/pull/88" },
+  { "repo": "acme/atlas-platform", "branch": "feature/checkout-redesign-express-lane-for-returning-customers", "number": 89, "state": "draft", "base": "feature/checkout-redesign-with-saved-payment-methods-and-address-book", "url": "https://github.com/acme/atlas-platform/pull/89" },
+  { "repo": "acme/atlas-platform", "branch": "bugfix/PLAT-2041-retry-webhook-delivery-when-the-partner-endpoint-times-out", "number": 86, "state": "open", "base": "main", "url": "https://github.com/acme/atlas-platform/pull/86" },
   { "repo": "globex/garden-planner", "branch": "feat/beds", "number": 3, "state": "open", "base": "main", "url": "https://github.com/globex/garden-planner/pull/3" } ]
 JSON
 : > "$app/control/context.txt"
