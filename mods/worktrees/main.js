@@ -9,13 +9,14 @@
 // rows in Go to; it publishes how many repos are not pushed.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, shared, setShared, exec, home, appHome, run, focused, layout, props, settings, spaces, panes, openOverlay, watchFolder, readTextFile, nextCommand } from "herdr";
+import { theme, shared, setShared, exec, home, appHome, run, focused, layout, props, settings, spaces, panes, openOverlay, watchFolder, readTextFile, nextCommand, notify } from "herdr";
 import { NAME } from "./name.js";
 import { key, prsNow, openPr, prWhere, spaceMap, openFolder } from "./hub.js";
 import History from "./history.js";
 import { parse } from "./status.js";
 import * as M from "./model.js";
 import { middle } from "./graph.js";
+import { editorLink, editorFor, rootInfo, rootRead, forgetRoots, checkoutOf, startOpen, openEditorMenu, menuCommand, renderMenu, setEditors, lookForEditors, haveEditors, SHORT_W } from "./editor-view.js";
 
 const PARALLEL = 8;
 const RESCAN_MS = 30 * 60 * 1000;
@@ -52,6 +53,7 @@ export default class Worktrees extends View {
   init(_props, cx) {
     // A copy opened with props {history: <checkout path>, …} is the history view of that checkout (history.js).
     if (props()?.history) { this.hist = new History(props(), cx); return; }
+    if (props()?.menu) { this.menu = true; return; } // the ▾ menu of an "Open in <Editor>" link (editor-view.js)
     if (shared(key("api"))?.version !== 1) setShared(key("api"), { version: 1 });
     this.cfg = M.configOf(null, home());
     this.show = localStorage.getItem("show") === "all" ? "all" : "needs";
@@ -109,15 +111,19 @@ export default class Worktrees extends View {
       this.slow.clear();
       cx.spawn((cx) => this.flush(cx));
     });
+    // Which editors are installed (files are read, at most once a day): the rows keep room for a link only then.
+    cx.spawn(async (cx) => { await lookForEditors(); cx.notify(); });
     // Commands, for keys.json ("<mod>.<command>"): show:needs|all, expand:<repo>, older, more, family:<repo>,
-    // open:<repo>, pr:<repo>, history:<repo>, refresh, refresh:all (ask git for every checkout), tick.
+    // open:<repo>, pr:<repo>, history:<repo>, refresh, refresh:all (ask git for every checkout), tick,
+    // editor (the checkout the focused pane is in, in its editor), editor:<path>[:<line>] (a folder or a file),
+    // editor-menu[:<path>] (the ▾ menu for it).
     // <repo>: a checkout's path, its path below its root, or its name.
     cx.spawn(async (cx) => { for (;;) { this.command(String(await nextCommand()), cx); cx.notify(); } });
   }
 
   // The last copy going (removed, quit): no rows in Go to that nobody would keep fresh.
   async close() {
-    if (!this.hist && shared(`goto.items.${NAME}`)) setShared(`goto.items.${NAME}`, null);
+    if (!this.hist && !this.menu && shared(`goto.items.${NAME}`)) setShared(`goto.items.${NAME}`, null);
   }
 
   setRepos(repos) {
@@ -139,6 +145,8 @@ export default class Worktrees extends View {
 
   command(c, cx) {
     const [name, arg] = [c.split(":")[0], c.split(":").slice(1).join(":")];
+    if (name === "editor-menu") return this.editorAt(arg, cx, true);
+    if (menuCommand(this, c, cx)) return;
     const hit = () => this.repos.find((r) => r.path === arg) ?? this.repos.find((r) => r.rel === arg) ?? this.repos.find((r) => r.name === arg) ?? null;
     if (name === "show" && SHOW.some(([k]) => k === arg)) this.setShow(arg);
     else if (name === "expand") this.toggle(hit()?.path ?? null, cx);
@@ -149,7 +157,30 @@ export default class Worktrees extends View {
     else if (name === "pr") { const r = hit(), pr = r && M.prFor(this.prsNow(), r.slug, this.info[r.path]?.branch); if (pr) openPr(pr, cx); }
     else if (name === "history") { const r = hit(); if (r) this.history(r.path, cx); }
     else if (name === "refresh") this.refresh(cx, arg === "all");
+    else if (name === "editor") this.editorAt(arg, cx);
     else if (name === "tick") cx.spawn((cx) => this.pass(cx, "tick", this.inUse())); // what the timer does every five minutes
+  }
+
+  // "Open in <Editor>" (editor-view.js). A click is one process; the link says "Opening …" for three seconds.
+  openEditor(target, cx, id = null) { startOpen(target, cx, id); }
+
+  // A checkout's folder as what a link opens. A worktree's menu also has the project's own folder.
+  folderTarget(root, more = {}) {
+    const repo = this.byPath.get(root), main = repo?.main ? { path: repo.main, name: (this.byPath.get(repo.main) ?? repo).name } : null;
+    return { root, ...(main ? { main, branch: this.info[root]?.branch ?? null } : {}), ...more };
+  }
+
+  // The editor command: a folder or a file (absolute, with an optional :line) opens in the checkout it is in;
+  // without a path it is the checkout the focused pane is in.
+  editorAt(arg, cx, menu = false) {
+    const m = /^(.*?)(?::(\d+))?$/.exec(arg), path = (m[1] || focused()?.cwd || "").replace(/\/+$/, "");
+    cx.spawn(async (cx) => {
+      const root = path.startsWith("/") ? await checkoutOf(path, this.repos.map((r) => r.path)) : null;
+      if (!root) return notify({ title: "Open in editor", body: path ? `${tilde(path)} is not in a git checkout.` : "The focused pane has no folder.", level: "error" });
+      // without a path: the checkout's root, also when the pane stands in a folder below it
+      const target = m[1] && path !== root ? { root, file: path.slice(root.length + 1), line: m[2] ? Number(m[2]) : null } : this.folderTarget(root);
+      if (menu) { await rootRead(root); openEditorMenu(this, target); } else this.openEditor(target, cx);
+    });
   }
 
   setShow(k) { this.show = k; try { localStorage.setItem("show", k); } catch {} }
@@ -157,6 +188,7 @@ export default class Worktrees extends View {
   // The settings: <app home>/<mod>.config.json, read before every scan.
   async loadConfig() {
     this.cfg = M.configOf(await readTextFile(`${appHome()}/${NAME}.config.json`).catch(() => null), home());
+    setEditors(this.cfg.editors);
   }
   // What the scan depends on, to tell a remembered list from other settings.
   where() { const { roots, worktreeRoots, prune, depth, max } = this.cfg; return JSON.stringify([roots, worktreeRoots, prune, depth, max]); }
@@ -410,6 +442,7 @@ export default class Worktrees extends View {
 
   // ↻: look for checkouts again and check all of them. force: ask git for every one, whatever the files say.
   refresh(cx, force = false) {
+    forgetRoots(); // folders may have gone or come back
     cx.spawn(async (cx) => { await this.scan(cx); if (force) this.local.clear(); await this.pass(cx, "full", null, force); });
   }
 
@@ -488,7 +521,7 @@ export default class Worktrees extends View {
 
   // A checkout. two: the name on its own line (never cut, it wraps), then branch · PR · age · context. Otherwise one
   // line (folded group, "All"): name, then branch · PR · age in a narrow slot.
-  row(x, t, { two, label, twin }) {
+  row(x, t, { two, label, twin }, cx) {
     const { repo, s, c } = x, path = repo.path, open = this.open === path, now = Date.now();
     const pr = M.prFor(this.prs, repo.slug, s?.branch);
     const spaceId = this.spaceOf.get(path);
@@ -517,24 +550,41 @@ export default class Worktrees extends View {
     const tags = h_flex().flex_none().gap(6).items_center().children(this.marks(x, t).map(([color, text, tip, strong], i) =>
       div().id(`t-${path}-${i}`).flex_none().text_size(11.5).text_color(color).when(Boolean(strong), (e) => e.font_semibold()).tooltip(tip).child(text)));
     const name = div().flex_1().min_w(0).text_size(13).text_color(t.foreground).child(label);
+    // "IJ ↗" / "VS ↗" in a reserved width, only on the row the pointer is on; a right click on the row: other editors.
+    const target = this.folderTarget(path), hover = this.hover === path;
+    const editor = haveEditors() ? h_flex().flex_none().w(SHORT_W).h(20).justify_end().children(hover ? editorLink(this, t, `row-${path}`, target, cx, true) : []) : null;
     return v_flex().id(`r-${path}`).px(2).py(two ? 3 : 0).rounded(6).hover((st) => st.bg(t.hover))
+      .when(Boolean(editor), (e) => e // one more draw per row the pointer enters: only when there is something to show
+        .on_hover((over, cx) => { const was = this.hover; this.hover = over ? path : was === path ? null : was; if (this.hover !== was) cx.notify(); })
+        .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); if (editorFor(target, cx)) openEditorMenu(this, target); }))
       .tooltip(`${path} · ${spaceId ? "click: go to its space" : "click: open a space for it"}`)
       .on_click((_e, cx) => this.openSpace(repo, cx))
       .child(h_flex().gap(4).items_center().min_h(24).child(chevron).when(Boolean(space), (e) => e.child(space))
         .child(name).when(!two, (e) => e.child(line2.flex_none().max_w(170).overflow_hidden()))
-        .child(tags))
+        .child(tags).when(Boolean(editor), (e) => e.child(editor)))
       .when(two, (e) => e.child(line2.pl(28).pb(1)))
-      .when(open, (e) => e.child(this.cardView(repo, t)));
+      .when(open, (e) => e.child(this.cardView(repo, t, cx)));
   }
 
   // The branch card under an open row: every local branch against the base branch, as text and a small bar.
-  cardView(repo, t) {
+  cardView(repo, t, cx) {
     const path = repo.path, card = this.card?.path === path ? this.card : null, now = Date.now();
     const link = (id, text, tip, click) => div().id(id).px(6).h(24).flex().items_center().rounded(5).text_size(11.5).text_color(t.muted)
       .hover((s) => s.bg(t.selected).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => { cx.stop_propagation(); click(cx); }).child(text);
     const foot = h_flex().gap(4).pt(2)
       .child(link(`hist-${path}`, "History ↗", "Open this repo's history as a drawn tree, in a tab of its own (or go to it when it is open).", (cx) => this.history(path, cx)))
-      .child(link(`space-${path}`, "Open space ↗", "Go to this repo's space, or open one for it.", (cx) => this.openSpace(repo, cx)));
+      .child(link(`space-${path}`, "Open space ↗", "Go to this repo's space, or open one for it.", (cx) => this.openSpace(repo, cx)))
+      .children(rootInfo(path, cx).there ? editorLink(this, t, `card-${path}`, this.folderTarget(path), cx) : [div().px(6).text_size(11.5).text_color(t.dim).child("Folder is gone.")]);
+    // A branch checked out in another folder: that folder in its editor (a worktree in VS Code; the menu has the
+    // project's own folder). When the folder was removed, the project's folder is what is left to open.
+    const project = { path: repo.main ?? path, name: (this.byPath.get(repo.main) ?? repo).name };
+    const elsewhere = (r, i) => {
+      if (rootInfo(r.worktree, cx).there) return editorLink(this, t, `wt-${path}-${i}`, { root: r.worktree, main: project, branch: r.name, where: `(the worktree with ${r.name})` }, cx, true);
+      if (!rootInfo(project.path, cx).there) return [div().flex_none().text_color(t.dim).child("Folder is gone.")];
+      const ed = editorFor({ root: project.path }, cx);
+      return [div().flex_none().text_color(t.dim).child(ed ? "Worktree removed ·" : "Worktree removed"), ...(ed ? [div().id(`gone-${path}-${i}`).flex_none().text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
+        .tooltip(`${tilde(r.worktree)} is gone. Open ${tilde(project.path)} instead.`).on_click((_e, cx) => { cx.stop_propagation(); this.openEditor({ root: project.path }, cx); }).child(`Open ${project.name} ↗`)] : [])];
+    };
     const box = v_flex().id(`card-${path}`).ml(28).mr(4).mb(4).mt(2).p(6).gap(3).rounded(6).border(1).border_color(t.border).bg(t.surface)
       .on_click((_e, cx) => cx.stop_propagation()); // the card is not the row's "open space" target
     if (!card) return box.child(div().text_size(11.5).text_color(t.dim).child("Reading branches…")).child(foot);
@@ -553,6 +603,7 @@ export default class Worktrees extends View {
         r.behind ? div().flex_none().text_color(t.dim).child(`↓${M.cap(r.behind)} to pull`) : null,
         r.pr ? this.prMark(`cpr-${path}-${i}`, r.pr, t) : null,
         r.worktree ? div().id(`wt-${path}-${i}`).flex_none().text_color(t.ansi6).tooltip(`Checked out in ${r.worktree}`).child("⧉ worktree") : null,
+        ...(r.worktree ? elsewhere(r, i) : []),
         r.canGo ? div().id(`go-${path}-${i}`).flex_none().text_color(t.ansi2)
           .tooltip(r.pr?.state === "merged" ? `PR #${r.pr.number} is merged and this branch is still its head.` : "Its upstream branch is gone (deleted on the remote, seen by the last fetch with prune).")
           .child("merged, can go") : null,
@@ -576,6 +627,7 @@ export default class Worktrees extends View {
 
   render(cx) {
     if (this.hist) return this.hist.render(cx);
+    if (this.menu) return renderMenu();
     const t = theme();
     const shown = shownNow();
     this.compact = (this.width ?? Infinity) < COMPACT_PX;
@@ -601,11 +653,11 @@ export default class Worktrees extends View {
       const note = (text) => div().px(8).py(4).text_size(12).text_color(t.dim).child(text);
       if (this.show === "all") {
         const all = [...g.unpushed, ...g.week, ...g.older, ...g.clean, ...g.pending].sort((a, b) => a.repo.rel.localeCompare(b.repo.rel) || a.repo.path.localeCompare(b.repo.path));
-        body.push(...all.map((x) => this.row(x, t, { two: false, label: x.repo.rel })));
+        body.push(...all.map((x) => this.row(x, t, { two: false, label: x.repo.rel }, cx)));
         if (!all.length && this.repos.length) body.push(note("No checkouts in this context."));
       } else {
         const twins = M.twins([...g.unpushed, ...g.week, ...g.older]);
-        const two = (x) => this.row(x, t, { two: true, label: x.repo.name, twin: twins.has(x.repo.name) });
+        const two = (x) => this.row(x, t, { two: true, label: x.repo.name, twin: twins.has(x.repo.name) }, cx);
         const more = (id, text, click) => div().id(id).ml(30).mr(8).px(6).h(24).flex().items_center().rounded(5).text_size(11.5).text_color(t.muted)
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => { click(); cx.notify(); }).child(text);
         // Complete, but a repo with many unpushed worktrees shows its newest few and one line for the rest.
@@ -628,7 +680,7 @@ export default class Worktrees extends View {
             .on_click((_e, cx) => { this.olderOpen = !this.olderOpen; cx.notify(); })
             .child(div().min_h(18).text_size(11).font_semibold().text_color(t.muted).child(`${this.olderOpen ? "▾" : "▸"} OLDER OR UNTRACKED ONLY (${g.older.length})`))
             .child(div().pl(12).text_size(11).text_color(t.dim).child(M.olderWhy(g.older, days))));
-          if (this.olderOpen) body.push(...g.older.map((x) => this.row(x, t, { two: false, label: x.repo.name })));
+          if (this.olderOpen) body.push(...g.older.map((x) => this.row(x, t, { two: false, label: x.repo.name }, cx)));
         }
       }
       // Nothing found at all: say where it looked and where to change that.

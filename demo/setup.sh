@@ -7,6 +7,9 @@
 #             talks to the network. herdr-core's config points this home at its own core, so the demo never
 #             shares terminals with yours (socket /tmp/herdr-worktrees-demo/core.sock: socket paths must be short).
 #   run/app   a Herdr home with the mod, the worktrees-demo provider mod (PR marks, two contexts) and settings.
+#   run/stubs an `open` that writes its arguments to run/opened.txt (record.sh puts it first on the PATH), and in the
+#             stand-in home two empty app folders for VS Code and IntelliJ IDEA: "Open in your editor" finds both
+#             and never starts one.
 # Then demo/record.sh opens a second Herdr window on it and takes the screenshots.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -15,7 +18,16 @@ run="$here/run" user="$here/run/user" app="$here/run/app" remotes="$here/run/rem
 code="$user/code" wt="$user/.herdr/worktrees"
 core=$(command -v herdr-core || command -v hc)
 rm -rf "$run"
-mkdir -p "$user/.config/herdr-core" "$app/mods" "$app/control" "$code" "$wt" "$remotes" /tmp/herdr-worktrees-demo
+mkdir -p "$user/.config/herdr-core" "$app/mods" "$app/control" "$code" "$wt" "$remotes" "$run/stubs" /tmp/herdr-worktrees-demo
+for a in "Visual Studio Code" "IntelliJ IDEA"; do
+  mkdir -p "$user/Applications/$a.app/Contents"; printf '<?xml version="1.0"?><plist version="1.0"><dict/></plist>\n' > "$user/Applications/$a.app/Contents/Info.plist"
+done
+cat > "$run/stubs/open" <<STUB
+#!/bin/sh
+# Stands in for what an editor link starts: writes the arguments to a file and starts nothing.
+{ printf 'open'; for a in "\$@"; do printf '\t%s' "\$a"; done; echo; } >> "$run/opened.txt"
+STUB
+chmod +x "$run/stubs/open"
 
 printf 'socket = "/tmp/herdr-worktrees-demo/core.sock"\nshell = ["/bin/zsh"]\n' > "$user/.config/herdr-core/config.toml"
 printf "PROMPT='%%F{cyan}%%~%%f %%# '\n" > "$user/.zshrc"
@@ -35,7 +47,9 @@ new() { # new <dir> [owner/repo]: one commit on main; with a slug, pushed once t
 github() { git remote set-url origin "https://github.com/$1.git"; }
 old() { touch -t "$(ago "$1")" .git/logs/HEAD .git/HEAD; }  # the last commit, as far as file times say
 
-# orbit-api: unpushed commits, tracked changes, a stack of two PRs, a merged branch, a gone upstream, worktrees
+# orbit-api: unpushed commits, tracked changes, a stack of two PRs, a merged branch, a gone upstream, worktrees;
+# a Maven project (its folder opens in IntelliJ, its worktrees in VS Code)
+mkdir -p "$code/orbit-api"; echo '<project/>' > "$code/orbit-api/pom.xml"
 new "$code/orbit-api" acme/orbit-api
 git checkout -qb fix/retry-old; commit "fix: retry with backoff"; git push -qu origin fix/retry-old; merged=$(git rev-parse HEAD)
 git checkout -q main; git checkout -qb chore/deps; commit "chore: bump deps"; git push -qu origin chore/deps; git push -q origin --delete chore/deps; git fetch -q --prune

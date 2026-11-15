@@ -159,13 +159,34 @@ last pass. Settings: `worktrees.config.json` in the app home.
   have nothing to do with each other, and one fold for both would draw a knot that is not there.
 - A mod's commands need a copy on screen, and a covered window draws nothing: scripts nudge the window first.
 
+**Open in your editor.** `editor.js` (pure, tested, the same file as in the PR review mod) has the editors, how the
+installed ones are found by reading files (macOS: `Contents/Info.plist` of each app in `/Applications` and
+`~/Applications`; Linux: the command line tools in the usual folders), which editor a place gets (a pick for the
+repo, else a file by its ending, a folder by `pom.xml`, `build.gradle`, `build.gradle.kts` or `.idea/`, a linked
+worktree VS Code), and the ONE program a click starts (macOS: `open` with the editor's link for a file and
+`open -a <app> <folder>` for a folder). `editor-view.js` is the Herdr side: the answer about installed editors is
+kept for a day in localStorage, a folder's facts (`.git`, the project's marks) are read once as files, a link says
+"Opening …" for three seconds and takes no second click meanwhile, only a failure is a toast, and a pick in the ▾
+menu is written to shared `editor.choice` (keyed by the repo's shared `.git` folder, `main` and `worktree` apart)
+only when it changed. Places: a row (the monogram only on the row the pointer is on, in a reserved width; a right
+click opens the menu), the branch card's foot, a card row whose branch is checked out in another folder, the
+history view's head, and a commit's files when the commit is on the checked-out branch and the file exists. The
+menu is the mod's own copy in a popup (`props.menu`); its entries are commands the opening copy takes.
+- A command may name a folder no link has shown yet: wait for the folder's facts before choosing the editor, or a
+  Gradle project opens in the wrong one.
+- In the demo `open` is a script first on the PATH that writes its arguments to `demo/run/opened.txt`, and both
+  editors are empty app folders in the stand-in home: no editor is ever started.
+
 **Done when:** `herdr-app check mods/worktrees` passes, `node --test mods/worktrees/test_model.mjs
 mods/worktrees/test_graph.mjs` passes, "History ↗" on `atlas-platform` in the demo shows main as the left lane
 with six branches beside it and folds like "· 9 commits ·", and
 `python3 mods/worktrees/test_probe.py` passes, in the demo the panel says "4 not pushed · 5 changed this week · 5
 older", ↻ with nothing changed starts one process (the ↻ tooltip says so), a commit in a repo changes the sentence
 without ↻, and `worktrees.expand:orbit-api` shows the
-stack `feat/login-flow` → `feat/login-tokens` and "merged, can go" at `fix/retry-old` and `chore/deps`.
+stack `feat/login-flow` → `feat/login-tokens` and "merged, can go" at `fix/retry-old` and `chore/deps`,
+`node --test mods/worktrees/test_editor.mjs` passes, and in the demo `worktrees.editor:<orbit-api's folder>` writes
+`open -a …/IntelliJ IDEA.app …/orbit-api` to `demo/run/opened.txt` (it has a `pom.xml`) while one of its agent
+worktrees gives `Visual Studio Code.app`.
 
 **Demo:** `demo/setup.sh` builds an invented setup in `demo/run` (ignored by git): a stand-in home with repos of
 `acme` under `~/code` (one of them, `atlas-platform`, with fifty commits, merged side branches, tags and very long

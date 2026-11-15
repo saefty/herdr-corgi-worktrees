@@ -8,10 +8,14 @@
 // choice changes, never while the list scrolls: a row's renderer only turns prepared numbers into elements.
 import { div } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar, InputState, Input } from "gpui-base";
-import { theme, exec, run, spaces, home, settings, readTextFile, nextCommand } from "herdr";
+import * as fs from "fs/promises";
+import { theme, exec, run, spaces, home, appHome, settings, readTextFile, nextCommand } from "herdr";
+import { NAME } from "./name.js";
 import * as M from "./model.js";
 import * as G from "./graph.js";
 import { prsNow, openPr, prWhere, openFolder } from "./hub.js";
+import * as E from "./editor.js";
+import { editorLink, startOpen, menuCommand, setEditors } from "./editor-view.js";
 
 const ROW = 26;        // every row's height
 const MAX = 400;       // commits per load; "Load more" doubles it
@@ -24,6 +28,7 @@ const TYPES = { feat: "ansi2", fix: "ansi1", docs: "ansi4", perf: "ansi5", refac
 const GAP = G.CHIP.gap;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+const FILES = 10; // ponytail: the first files of a commit and a count; the whole change is one click away ("Open diff")
 const hhmm = (ms) => new Date(ms).toTimeString().slice(0, 5);
 const day = (d) => `${MONTHS[d.getMonth()]} ${d.getDate()} ${d.getFullYear()} ${d.toTimeString().slice(0, 5)}`;
 const tilde = (path) => (path.startsWith(`${home()}/`) ? `~${path.slice(home().length)}` : path);
@@ -52,6 +57,7 @@ export default class History {
     this.input.on("change", (_e, cx) => { this.filter = this.input.value().trim().toLowerCase(); this.arrange(); cx.notify(); });
     this.input.on("submit", () => this.handle.focus());
     cx.spawn((cx) => this.load(cx));
+    readTextFile(`${appHome()}/${NAME}.config.json`).then((text) => setEditors(M.configOf(text, home()).editors)).catch(() => null); // the settings' own editors
     // Commands ("<mod>.h-…", for keys and scripts): h-mode:branches|branch|all, h-filter:<text>, h-select:<row | hash | branch>,
     // h-unfold:<n | all>, h-more, h-refresh, h-esc, h-branch:<name>, h-pick:<branch>, h-lanes:next|prev.
     // "focus" comes from pane.go.
@@ -100,6 +106,8 @@ export default class History {
     // Commits the base does not have yet: their subjects stay bright, merged history is dimmed.
     const merged = this.baseTip ? G.reachable(this.commits, this.baseTip) : null;
     this.unmerged = new Set(merged ? this.commits.filter((c) => !merged.has(c.hash)).map((c) => c.hash) : []);
+    // Commits of the checked-out branch: their files are in this folder, so they can be opened in an editor.
+    this.inHead = G.reachable(this.commits, this.commits.find((c) => c.refs.head)?.hash ?? null);
     this.drawnSig = null; // the rows' pieces are prepared again on the next render
     this.layoutMs = Date.now() - started;
   }
@@ -112,6 +120,7 @@ export default class History {
 
   command(c, cx) {
     if (c === "focus") return this.handle.focus();
+    if (menuCommand(this, c, cx)) return; // the ▾ menu of an "Open in <Editor>" link
     const [name, arg] = [c.split(":")[0], c.split(":").slice(1).join(":")];
     const folds = () => this.nodes.filter((n) => n.fold).map((n) => n.id);
     if (name === "h-mode" && MODES.some(([k]) => k === arg)) this.setMode(arg, cx);
@@ -150,7 +159,11 @@ export default class History {
     cx.spawn(async (cx) => {
       const r = await this.git(["show", "--no-color", "--numstat", "--format=%an%x1f%aI%x1f%B%x1e", "--end-of-options", node.id, "--"]);
       if (this.detail?.hash !== node.id) return;
-      this.detail.data = r.code === 0 ? G.parseShow(r.stdout) : { author: "", date: "", message: "git show failed here.", files: [] };
+      const data = r.code === 0 ? G.parseShow(r.stdout) : { author: "", date: "", message: "git show failed here.", files: [] };
+      // Which of the listed files are in the checkout now (a file read, no process): only those get a link.
+      if (this.inHead.has(node.id)) await Promise.all(data.files.slice(0, FILES).map(async (f) => { const abs = E.safeFile(this.path, f.path); f.here = Boolean(abs) && await fs.exists(abs).catch(() => false); }));
+      if (this.detail?.hash !== node.id) return;
+      this.detail.data = data;
       cx.notify();
     });
   }
@@ -179,6 +192,9 @@ export default class History {
     const r = this.refs.get(name);
     openFolder(r?.current ? this.path : r?.worktree ?? this.path, this.context, cx);
   }
+
+  // "Open in <Editor>" (editor-view.js): one process per click.
+  openEditor(target, cx, id = null) { startOpen(target, cx, id); }
 
   openDiff(hash) {
     run("pane.split", { direction: "down", argv: ["git", "-C", this.path, "-c", "core.pager=less -+F -R", "show", hash] });
@@ -281,14 +297,13 @@ export default class History {
         .child(u.narrow ? M.age(node.commit.at, u.now) : `${d.meta}  ${M.age(node.commit.at, u.now).padStart(4)}`));
   }
 
-  details(t) {
+  details(t, cx) {
     const d = this.detail, data = d.data, c = this.commits.find((x) => x.hash === d.hash);
     const pill = (id, text, tip, click) => div().id(id).flex_none().px(8).h(24).flex().items_center().rounded(5).border(1).border_color(t.border).text_size(11.5).text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip).on_click((_e, cx) => { click(); cx.notify(); }).child(text);
     const [subject, ...rest] = (data?.message || c?.subject || "").split("\n");
     const body = rest.join("\n").trim().split("\n").filter((l, i, a) => l || a.length > 1).slice(0, 6);
     const when = data?.date ? day(new Date(data.date)) : "";
-    const FILES = 10; // ponytail: the first files and a count; the whole change is one click away ("Open diff")
     return v_flex().id("h-details").flex_none().p(12).gap(6).border_t(1).border_color(t.border).bg(t.surface)
       .child(h_flex().gap(8).items_start()
         .child(div().flex_1().min_w(0).text_size(13).font_semibold().text_color(t.foreground).child(subject))
@@ -298,10 +313,11 @@ export default class History {
       .when(body.some(Boolean), (e) => e.child(v_flex().text_size(12).text_color(t.muted).children(body.map((l) => div().min_h(16).child(l)))))
       .child(!data ? div().text_size(11.5).text_color(t.dim).child("Reading the commit…")
         : v_flex().gap(1).text_size(11.5)
-          .children(data.files.slice(0, FILES).map((f) => h_flex().gap(8).min_h(18).items_center()
+          .children(data.files.slice(0, FILES).map((f, k) => h_flex().gap(8).min_h(18).items_center()
             .child(div().flex_none().w(40).text_right().text_color(t.ansi2).child(f.add === null ? "bin" : `+${f.add}`))
             .child(div().flex_none().w(40).text_right().text_color(t.ansi1).child(f.del === null ? "" : `−${f.del}`))
-            .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(f.path))))
+            .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(f.path))
+            .children(f.here ? editorLink(this, t, `h-file-${k}`, { root: this.path, file: f.path, where: `in ${tilde(this.path)}` }, cx, true) : [])))
           .when(data.files.length > FILES, (e) => e.child(div().pl(96).text_color(t.dim).child(`+${data.files.length - FILES} more files`)))
           .when(!data.files.length, (e) => e.child(div().text_color(t.dim).child("No file changes (a merge, or an empty commit)."))));
   }
@@ -348,7 +364,10 @@ export default class History {
           .when(this.more, (e) => e.child(icon("h-more", "Load more", `Only the newest ${this.commits.length} commits are listed. Click: twice as many.`, (cx) => this.loadMore(cx))))
           .child(icon("h-refresh", this.loading ? "…" : "↻", `Read the history again. Local only: nothing is fetched.${this.gitMs !== undefined ? ` Last time: git ${this.gitMs} ms, layout ${this.layoutMs} ms.` : ""}`, (cx) => cx.spawn((cx) => this.load(cx))).accessibility_label("Refresh history")))
         .when(narrow, (e) => e.child(filter))
-        .child(div().text_size(11).text_color(this.error ? t.blocked : t.dim).truncate().child(state)))
+        // the state line, and at its end the repo's folder in its editor (the first line has no room to spare)
+        .child(h_flex().gap(8).items_center().min_h(24)
+          .child(div().flex_1().min_w(0).text_size(11).text_color(this.error ? t.blocked : t.dim).truncate().child(state))
+          .children(editorLink(this, t, "h-head", { root: this.path }, cx, narrow))))
       .child(div().id("h-list").flex_1().min_h(0).relative()
         .on_mouse_down("left", (e) => { this.pressX = G.pressX(e.local_position ?? { x: 0 }, e.bounds, this.width ?? 0); })
         .when(!nodes.length && !this.loading, (e) => e.child(div().p(14).text_size(12).text_color(t.dim).child(this.error ? "No history to show." : this.filter ? "No commit matches." : "No commits yet.")))
@@ -357,6 +376,6 @@ export default class History {
           return nodes.slice(range.start, range.end).map((node, k) => this.row(node, range.start + k, t, u));
         }).track_scroll(this.scroll).on_item_click((key, cx) => this.clickRow(key, cx)).size_full())
         .child(Scrollbar.vertical("h-rows").absolute().inset_0()))
-      .when(Boolean(this.detail), (e) => e.child(this.details(t)));
+      .when(Boolean(this.detail), (e) => e.child(this.details(t, cx)));
   }
 }

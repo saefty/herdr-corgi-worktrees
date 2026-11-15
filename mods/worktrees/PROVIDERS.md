@@ -102,8 +102,18 @@ the last copy of Worktrees closes, it sets `goto.items.worktrees` to `null`.
 | `pr:<repo>` | a click on the row's PR mark |
 | `history:<repo>` | the card's "History ↗": the repo's history view, as a tab of its own |
 | `older`, `more`, `family:<repo>` | fold or unfold "Older or untracked only", "Show n more", and one repo's worktrees |
+| `editor` | open the checkout the focused pane is in, in its editor (for a key: `"cmd-shift-e": "worktrees.editor"` in `keys.json`) |
+| `editor:<path>[:<line>]` | the same for a folder or a file by its absolute path; a file opens at that line. The path must be in a git checkout |
+| `editor-menu[:<path>]` | the ▾ menu for it: the other editors, "Copy path", "Look for installed editors again" |
 
-`<repo>` is a checkout's path, its path below its root, or its name.
+`<repo>` is a checkout's path, its path below its root, or its name. The editor commands are taken by the panel,
+not by a history view.
+
+**The editor choice.** A pick in a ▾ menu is kept in shared state, for every mod that opens editors:
+`editor.choice` = `{ "default": null, "repos": { "<the repo's shared .git folder>": { "main": "idea", "worktree":
+"vscode" } } }` (`main`: the repo's main checkout, `worktree`: its linked worktrees; ids `vscode`, `idea`, `cursor`,
+`zed`, or one of your own from the settings). It is written only when a pick changes it. `default`, when you set it,
+is used where no rule suggests an installed editor.
 
 The history view has its own, so that a key reaches the right copy when both are on screen:
 
@@ -142,10 +152,14 @@ All keys optional; the values below are the defaults.
   "depth": 4,
   "max": 500,
   "weekDays": 7,
-  "goto": true
+  "goto": true,
+  "editors": []
 }
 ```
 
+- `editors`: more editors for "Open in your editor": `[{ "id", "name", "folder": [program, args…], "file":
+  [program, args…] }]` with `{dir}`, `{file}` and `{line}` in the arguments. A program and its arguments, never a
+  shell line.
 - `roots`: the folders searched for git checkouts, `depth` levels deep. Hidden folders and the names in `prune`
   are never entered. A root is never `/` or the home folder itself.
 - `worktreeRoots`: folders whose checkouts are marked "agent worktree". The default is where Herdr's worktree mod
@@ -162,3 +176,8 @@ All keys optional; the values below are the defaults.
 - The bars in the branch card need git 2.41 or newer (`for-each-ref %(ahead-behind:…)`). With an older git the
   card lists the branches without bars.
 - "Open diff ↗" in the history view uses git's pager, `less`.
+- Optional: an editor for the "Open in your editor" links. macOS: VS Code, IntelliJ IDEA, Cursor or Zed as an app
+  in `/Applications` or `~/Applications` (found by reading the app's `Contents/Info.plist`, started with `open`).
+  Linux: `code`, `idea` or `idea.sh`, `cursor`, `zed` in `/usr/bin`, `/usr/local/bin`, `/snap/bin`, `~/.local/bin`
+  or `~/bin`. No process is started to find them; the answer is kept for a day ("Look for installed editors
+  again" in the ▾ menu asks anew).

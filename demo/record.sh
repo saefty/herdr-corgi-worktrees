@@ -12,7 +12,8 @@ run="$here/run" user="$here/run/user" out="$root/docs/screenshots" frames="$here
 export HERDR_APP_HOME="$run/app"
 mkdir -p "$out" "$frames"
 
-HOME="$user" SHELL=/bin/zsh DO_NOT_TRACK=1 HERDR_TELEMETRY=0 \
+# run/stubs first on the PATH: its `open` stands in for the real one, so an editor link never starts an editor
+HOME="$user" PATH="$run/stubs:$PATH" SHELL=/bin/zsh DO_NOT_TRACK=1 HERDR_TELEMETRY=0 \
   /Applications/Herdr.app/Contents/MacOS/Herdr > "$run/herdr.log" 2>&1 &
 until herdr-app status > /dev/null 2>&1; do sleep 1; done
 sleep 2
@@ -76,6 +77,12 @@ hist mode:branches 10; hist filter:checkout 2; snap h-filter; crop h-filter "$ou
 hist filter: 2
 panel 600; sleep 3; snap h-narrow; crop h-narrow "$out/history-narrow.png" "$((w - 536 - 1200 - 32)):$((h - 84 - 56)):536:84"
 panel 380
+
+# "Open in your editor": the Maven project's folder, one of its worktrees, a file. Nothing is started: run/stubs/open
+# writes what would have been (IntelliJ for the project, VS Code for the worktree and the file).
+: > "$run/opened.txt"
+cmd "editor:$user/code/orbit-api" 4; cmd "editor:$user/.herdr/worktrees/orbit-api/agent-fix-timeouts" 4; cmd "editor:$user/code/docs-site/README.md:3" 4
+sed "s#$run#demo/run#g" "$run/opened.txt"
 
 [ -z "${KEEP:-}" ] || exit 0 # KEEP=1: leave the demo window open to try things
 do_ app.quit || true

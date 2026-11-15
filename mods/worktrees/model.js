@@ -34,6 +34,7 @@ export function configOf(text, home) {
     max: int(doc.max, DEFAULTS.max, 1, 5000),
     weekDays: int(doc.weekDays, DEFAULTS.weekDays, 1, 365),
     goto: doc.goto !== false,
+    editors: Array.isArray(doc.editors) ? doc.editors : [], // more editors for "Open in <Editor>" (editor.js extraEditors)
   };
 }
 

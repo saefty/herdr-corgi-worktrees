@@ -79,6 +79,15 @@ never write to a repo.
   `git show` in a terminal pane. A click on a branch chip goes to that branch's space or worktree, on a pull
   request mark to the pull request. Arrow keys move, Enter opens, Esc closes.
 - The history lists the newest 400 commits at first ("Load more" doubles it), from one `git log`.
+- **Open in your editor.** A checkout's folder opens in VS Code or IntelliJ IDEA (Cursor and Zed too): "IJ ↗" or
+  "VS ↗" on the row the pointer is on, "IntelliJ ↗ ▾" in the branch card next to "Open space ↗" and in the history
+  view's head. A branch that is checked out in a worktree opens that worktree; a commit's file opens in the
+  checkout when the commit is on the checked-out branch and the file is still there. The editor is suggested:
+  a Maven or Gradle project (or one with `.idea/`) gets IntelliJ, anything else VS Code, a worktree VS Code
+  (IntelliJ would import the project there and write `.idea/` into it), a file goes by its ending. ▾ or a right
+  click has the other installed editors; a pick there is kept for that repo, separately for its main checkout and
+  for its worktrees, and shared with PR review. A worktree whose folder is gone says "Worktree removed" and
+  offers the project's folder. One process per click, none to find the editors.
 - "All" lists every checkout by folder, clean ones included.
 - Cheap by design. Starting a process is what costs time (a quarter of a second each on some machines), so git
   is asked as rarely as possible: one small helper reads from files which checkouts changed since their last
@@ -97,7 +106,8 @@ Worktrees, [Go to](https://github.com/saefty/herdr-corgi-goto) and [PR review](h
 - With **Go to**, the checkouts that need a look show up there ("orbit-api · feat/login-flow, 3 not pushed") and
   Enter takes you to the space.
 - With **PR review**, a click on a pull request mark opens that PR in the review. The marks themselves come from a
-  provider: any mod that knows your pull requests can publish them.
+  provider: any mod that knows your pull requests can publish them. The editor you pick for a repo in one of the
+  two is the editor in the other.
 - **Your own mod** can publish pull requests, tell which checkout belongs to which of your setups, and show the
   count in a bar. [PROVIDERS.md](mods/worktrees/PROVIDERS.md) has the shapes.
 
@@ -105,7 +115,8 @@ Worktrees, [Go to](https://github.com/saefty/herdr-corgi-goto) and [PR review](h
 
 - `mods/worktrees/`: the mod. `main.js` is the panel and `history.js` the history view; `model.js`, `status.js`
   and `graph.js` (lanes, folds) are the logic without any UI, each with its tests. `probe.py` is the helper
-  that reads which checkouts changed.
+  that reads which checkouts changed. `editor.js` (the editors and the rules, with its test; the same file as in
+  PR review) and `editor-view.js` are "Open in your editor".
 - `RECIPE.md`: the brief to build it from scratch.
 - `demo/`: an invented setup for the screenshots.
 
@@ -120,6 +131,8 @@ A mod can't install programs. Everything the panel runs is on a developer machin
 | `find` | finding checkouts | part of macOS | part of findutils |
 | `python3` (optional, standard library only) | `probe.py`, the helper that tells from files which checkouts changed. Without it every check starts one `git status` per checkout (and one `stat`): the same list, but about a quarter of a second per checkout on machines where starting a process is slow | part of Xcode's tools, or `brew install python` | `sudo apt install python3` |
 | `less` (optional) | "Open diff ↗" in the history view: git's pager keeps the pane open; without it the pane closes at once | part of macOS | `sudo apt install less` |
+| An editor (optional): VS Code, IntelliJ IDEA, Cursor or Zed | the "Open in your editor" links; without one there are no such links | the app in `/Applications` or `~/Applications` (`brew install --cask visual-studio-code`, `brew install --cask intellij-idea`); JetBrains Toolbox installs there too. On macOS the app is enough, the `code` and `idea` command line tools are not needed | the editor's command line tool in `/usr/bin`, `/usr/local/bin`, `/snap/bin`, `~/.local/bin` or `~/bin`: `code` (`sudo snap install code --classic`), `idea` or `idea.sh`, `cursor`, `zed` |
+| `open` (macOS) | starting the editor: a file opens through the editor's own link (`vscode://file/…`, `idea://open?…`), a folder with `open -a` | part of macOS | not used |
 
 It needs no network, no `gh` and no login. Pull request marks come from other mods, not from a program here.
 The demo scripts (`demo/`) also use `node` and `ffmpeg`; the mod doesn't.
@@ -161,14 +174,18 @@ The panel is made for 380 px and works from about 280 px.
   "depth": 4,
   "max": 500,
   "weekDays": 7,
-  "goto": true
+  "goto": true,
+  "editors": []
 }
 ```
 
 `roots` are the folders searched for git checkouts and `depth` how deep. `worktreeRoots` are folders whose
 checkouts are marked "agent worktree" (the default is where Herdr puts them). `prune` are folder names never
 entered. `max` caps the list, `weekDays` is what "this week" means, and `goto: false` keeps the checkouts out of
-Go to. After a change press ↻ in the panel.
+Go to. `editors` adds editors of your own to "Open in your editor", or an editor in a place the mod does not look
+in: `{ "id": "nvim", "name": "Neovim", "folder": ["my-terminal", "-e", "nvim", "{dir}"], "file": ["my-terminal", "-e",
+"nvim", "+{line}", "{file}"] }`; each is a program with its arguments, never a shell line. After a change press ↻
+in the panel.
 
 ## Customize
 
@@ -178,6 +195,10 @@ Without touching code:
 - **What "this week" means:** `weekDays`.
 - **Keys:** every click has a command (`worktrees.refresh`, `worktrees.show:all`, `worktrees.expand:<repo>`, …);
   the list is in [PROVIDERS.md](mods/worktrees/PROVIDERS.md#4-commands).
+- **A key for "open this project in my editor":** `worktrees.editor` opens the checkout the focused pane is in.
+  Add a line to `~/.config/herdr-app/keys.json`, under `"global"`: `"cmd-shift-e": "worktrees.editor"`. It works
+  while the panel is on screen.
+- **More editors:** `editors` in `worktrees.config.json`.
 
 Changed the code itself? Your edits survive `corgi update`: Corgi merges your version, the old release and the new
 one. `corgi diff worktrees` shows what you changed.
@@ -188,6 +209,11 @@ one. `corgi diff worktrees` shows what you changed.
 - It never writes: no push, commit, stash or branch delete. You act in the repo's space.
 - The history view is for reading: no checkout, rebase or cherry-pick from it. A commit git did not list (beyond
   "Load more") leaves its lane open at the bottom.
+- An editor link only starts the editor: no checkout, no stash, nothing written. Opening a folder in an editor
+  can run that project's code (tasks, extensions); the links only open checkouts that are on your machine already.
+- `worktrees.editor` from a key needs the panel on screen: a mod's command reaches no copy that is hidden.
+- Whether IntelliJ's link counts lines from 0 or from 1 was not tried by hand yet; it is one number in
+  `editor.js` (`LINE_BASE`). The panel itself opens files without a line.
 - "Not pushed" looks at the branch each checkout has checked out. Other branches with local commits show in the
   branch card.
 - The count for a bar is live only after the panel was shown once since the app started.
@@ -198,7 +224,7 @@ one. `corgi diff worktrees` shows what you changed.
 
 ## Tests
 
-`node --test mods/worktrees/test_model.mjs mods/worktrees/test_graph.mjs` and `python3 mods/worktrees/test_probe.py`
+`node --test mods/worktrees/test_model.mjs mods/worktrees/test_graph.mjs mods/worktrees/test_editor.mjs` and `python3 mods/worktrees/test_probe.py`
 
 ## For mod authors
 

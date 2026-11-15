@@ -10,3 +10,7 @@
   checkouts in use.
 - The history view: a repo's commits as a drawn tree (a lane per branch, folds for merged history, chips for
   branches, tags and pull requests, commit details), instead of `git log --graph` in a terminal.
+- Open in your editor: a checkout, a worktree or a commit's file opens in VS Code or IntelliJ IDEA (Cursor, Zed,
+  or one from the settings) from the row, the branch card and the history view, and with `worktrees.editor` from a
+  key. The editor is suggested by the kind of project and can be picked per repo; the pick is shared with PR
+  review. New optional requirement: one of these editors (see README, Requirements).
