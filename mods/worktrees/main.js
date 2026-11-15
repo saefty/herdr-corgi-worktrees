@@ -508,7 +508,9 @@ export default class Worktrees extends View {
     let g = null;
     if (shown) { // hidden: nothing below the header is worked out
       this.spaceOf = this.spaceMap();
-      g = M.groups(mine, this.info, this.times, Date.now(), days * M.DAY);
+      // During the very first pass ages are still missing (they come last): everything counts as not checked yet,
+      // rather than listed in a group it will leave a moment later.
+      g = M.groups(mine, this.checkedAt ? this.info : {}, this.times, Date.now(), days * M.DAY);
       const head = (id, text, hint) => h_flex().id(id).px(8).pt(10).pb(2).gap(8).items_center().justify_between().text_size(11)
         .child(div().flex_none().font_semibold().text_color(t.muted).child(text))
         .when(!this.compact && Boolean(hint), (e) => e.child(div().min_w(0).truncate().text_color(t.dim).child(hint)));
