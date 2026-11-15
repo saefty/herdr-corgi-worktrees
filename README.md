@@ -92,7 +92,7 @@ never write to a repo.
 - Drag a checkout's row onto a terminal and its folder's path is typed there, quoted and without Enter. The same
   goes for a changed file in a commit's details, when that file is in the checkout now. A click still does what
   it did.
-- Cheap by design. Starting a process is what costs time (a quarter of a second each on some machines), so git
+- The panel is cheap by design. Starting a process is what costs time (a quarter of a second each on some machines), so git
   is asked as rarely as possible: one small helper reads from files which checkouts changed since their last
   `git status`, one process for all of them, and git runs only for those. What was known is kept across app
   starts, so the list is there at once. All checkouts are checked when the panel opens and on ↻; while it stays
@@ -130,13 +130,14 @@ A mod can't install programs. Everything the panel runs is on a developer machin
 
 | Program | Needed for | macOS | Linux |
 |---|---|---|---|
-| `git` | everything: status, branches, the history pane | `brew install git` (or Xcode's) | `sudo apt install git` |
+| `git` 2.24 or newer | everything: status, branches, the history pane (a commit's details use `--end-of-options`, which came with 2.24) | `brew install git` (or Xcode's) | `sudo apt install git` |
 | `git` 2.41 or newer (optional) | the bars in the branch card (ahead of and behind main); an older git lists the branches without them | `brew upgrade git` | your distribution's newer package |
 | `find` | finding checkouts | part of macOS | part of findutils |
 | `python3` (optional, standard library only) | `probe.py`, the helper that tells from files which checkouts changed. Without it every check starts one `git status` per checkout (and one `stat`): the same list, but about a quarter of a second per checkout on machines where starting a process is slow | part of Xcode's tools, or `brew install python` | `sudo apt install python3` |
 | `less` (optional) | "Open diff ↗" in the history view: git's pager keeps the pane open; without it the pane closes at once | part of macOS | `sudo apt install less` |
 | An editor (optional): VS Code, IntelliJ IDEA, Cursor or Zed | the "Open in your editor" links; without one there are no such links | the app in `/Applications` or `~/Applications` (`brew install --cask visual-studio-code`, `brew install --cask intellij-idea`); JetBrains Toolbox installs there too. On macOS the app is enough, the `code` and `idea` command line tools are not needed | the editor's command line tool in `/usr/bin`, `/usr/local/bin`, `/snap/bin`, `~/.local/bin` or `~/bin`: `code` (`sudo snap install code --classic`), `idea` or `idea.sh`, `cursor`, `zed` |
-| `open` (macOS) | starting the editor: a file opens through the editor's own link (`vscode://file/…`, `idea://open?…`), a folder with `open -a` | part of macOS | not used |
+| `open` (macOS) | starting the editor: a file opens through the editor's own link (`vscode://file/…`, `idea://open?…`), a folder with `open -a`. Also a pull request mark's click, when no other mod takes it: the PR's `https://` address opens in the browser | part of macOS | not used |
+| `xdg-open` (Linux, optional) | a pull request mark's click, when no other mod takes it: the PR's `https://` address opens in the browser. Without it such a click does nothing | not used | `sudo apt install xdg-utils` |
 
 It needs no network, no `gh` and no login. Pull request marks come from other mods, not from a program here.
 The demo scripts (`demo/`) also use `node` and `ffmpeg`; the mod doesn't.
