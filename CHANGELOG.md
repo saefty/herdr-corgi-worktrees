@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 (2026-11-15)
+
+- The list in the panel could not be scrolled down, in "Needs me" and in "All". It has a name and a scroll
+  position of its own now, as every list Herdr ships has, and stays where you scrolled it. The other list starts
+  at its top when you switch.
+- New commands for keys: `worktrees.scroll:top`, `worktrees.scroll:end` and `worktrees.scroll:<line>`.
+- README: the use cases start with the two the panel is for, seeing your open work in progress and opening a
+  worktree in your editor.
+
 ## 0.1.0 (2026-11-15)
 
 - First version: three lists over every git checkout (Not pushed, Changed this week, Older or untracked only),

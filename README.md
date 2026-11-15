@@ -15,19 +15,27 @@ never write to a repo.
 
 ## Use cases
 
-- **Before you close the laptop.** "Not pushed" lists every repo with commits that are only here, the newest
-  first, with the branch and how many commits. A branch that was never pushed counts too.
-- **An agent finished in a worktree.** Agents' worktrees are listed with the repo they belong to, so the three
-  commits on `agent/fix-timeouts` don't stay behind when you remove the worktree.
-- **Where was I this week?** "Changed this week" has the checkouts with uncommitted changes to tracked files from
-  the last seven days. Old leftovers and folders full of untracked files are folded away below, with a count and
-  the reason.
-- **What can go?** Open a row and its branch card shows every local branch against main: ahead, behind, its age,
-  its worktree, its pull request. "merged, can go" appears only with proof.
-- **Go there.** A click on a row goes to the space that is open on that checkout, or opens one.
-- **What happened on this branch?** "History ↗" opens the repo's history as a tree. Unmerged branches are shown
-  commit by commit, each in its own color; the main line is the left lane; plain merged history is folded into
-  "· 14 commits ·" until you click it.
+The two things the panel is for:
+
+- **See your open work in progress.** "Not pushed" lists every repo with commits that are only on this machine,
+  the newest first, with the branch and how many commits; a branch that was never pushed counts too. "Changed this
+  week" lists the checkouts with uncommitted changes to tracked files from the last seven days. The worktrees
+  agents work in are listed with the repo they belong to and marked "agent worktree", so three commits on
+  `agent/fix-timeouts` do not stay behind when the worktree is removed. Old leftovers are folded away below, with
+  a count and the reason.
+- **Open a worktree in your editor.** Point at a row and a short link appears at its end: "IJ ↗" opens that
+  checkout in IntelliJ IDEA, "VS ↗" in VS Code. The branch card (▸ on a row) has the same link with the editor's
+  full name, and one for each branch that is checked out in another worktree. The ▾ next to a link, or a right
+  click on a row, offers the other installed editors; what you pick is kept for that repo, separately for its
+  main checkout and for its worktrees.
+
+It also answers these:
+
+- **What can go?** The branch card shows every local branch against main: ahead, behind, its age, its worktree
+  and its pull request. "merged, can go" appears only with proof.
+- **Take me there.** A click on a row goes to the space that is open on that checkout, or opens one.
+- **What happened on this branch?** "History ↗" opens the repo's history as a drawn tree, with merged history
+  folded until you click it.
 
 ## Screenshots
 
