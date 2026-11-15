@@ -110,7 +110,7 @@ async function openIn(target, id = null) {
   const r = await exec(argv[0], argv[1], { timeout: 20000 }).catch((e) => ({ code: 1, stderr: String(e) }));
   if (r.code === 0) return null;
   known = null; try { localStorage.removeItem(KEY); } catch { /* none */ } // it may be gone: look again the next time
-  return `${E.editorName(use, extra)} could not be started. Choose another editor with ▾.`;
+  return E.failedText(use, extra);
 }
 
 const keyOf = (target) => `${target.root}\n${target.file ?? ""}\n${target.line ?? ""}`;
@@ -178,12 +178,12 @@ export function editorLink(view, t, key, target, cx, short = false) {
   if (!m) return [];
   const base = (id) => div().id(id).flex_none().flex().items_center().text_size(11.5).accessibility_label(`Open in ${E.editorName(m.id, extra)}`);
   const click = (e) => (m.busy ? e.text_color(t.dim) : e.cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); view.openEditor(target, cx); }));
-  if (short) return [click(base(`ed-${key}`).h(20).rounded(4).text_color(t.muted).hover((s) => s.text_color(t.foreground)).tooltip(`${m.tip} Right-click for other editors.`)
+  if (short) return [click(base(`ed-${key}`).h(20).rounded(4).text_color(t.muted).hover((s) => s.text_color(t.foreground)).tooltip(E.shortTip(m.tip))
     .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openEditorMenu(view, target); })).child(m.text)];
   return [h_flex().flex_none().items_center().rounded(5)
     .child(click(base(`ed-${key}`).h(24).pl(6).pr(3).rounded(5).text_color(t.muted).hover((s) => s.bg(t.selected).text_color(t.foreground)).tooltip(m.tip)).child(m.text))
     .child(div().id(`ed-${key}-more`).flex_none().h(24).px(4).flex().items_center().rounded(5).text_size(11.5).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.selected).text_color(t.foreground))
-      .tooltip("Other editors, Copy path, Look again.").accessibility_label("Other editors").on_click((_e, cx) => { cx.stop_propagation(); openEditorMenu(view, target); }).child("▾"))];
+      .tooltip(E.MENU_TIP).accessibility_label("Other editors").on_click((_e, cx) => { cx.stop_propagation(); openEditorMenu(view, target); }).child("▾"))];
 }
 
 // The menu's entries ("editor-use:<token>:<id>", "editor-main:<token>", …), for the copy whose menu it was: true

@@ -54,6 +54,7 @@ function reset(w) {
       log.push(["exec", cmd, opts?.cwd ?? args.find((a) => a.endsWith(".py")) ?? "", args]);
       if (cmd === "find" && world.find) return { code: 0, stderr: "", stdout: world.find(args) };
       if (cmd === "find" && args[1] === `${HOME}/code`) return { code: 0, stderr: "", stdout: world.repos.map((p) => `${p}/.git\n`).join("") };
+      if (world.fail?.includes(cmd)) return { code: 1, stderr: "no", stdout: "" };
       if (cmd === "git" && args[0] === "show") return { code: 0, stderr: "", stdout: world.show ?? "" };
       if (cmd === "stat") return { code: 0, stderr: "", stdout: world.touched.map((p) => `${Math.floor(Date.now() / 1000)} ${p}/.git/logs/HEAD\n`).join("") };
       return { code: 0, stderr: "", stdout: "" };
@@ -294,4 +295,15 @@ test("after a click a link says Opening <Editor> …: the short form too, and th
   assert.deepEqual(short(), ["Opening VS Code …"]);
   assert.equal(card().filter((x) => x === "Opening VS Code …").length, 2); // the card's own link and the removed worktree's
   await settle();
+});
+
+test("an editor that could not be started: the toast has editor.js' words", async () => {
+  const E = await import("./editor.js");
+  reset({ repos: [repo(8)], spaces: [], fail: ["open"], read: (p) => (p.includes("Visual Studio Code.app") ? "<plist/>" : null) });
+  const panel = await start();
+  await EV.lookForEditors(true);
+  log.length = 0;
+  panel.openEditor({ root: repo(8) }, cx); await settle();
+  assert.deepEqual(asked("exec").map((l) => l[1]), ["open"]); // one process per click
+  assert.deepEqual(asked("notify").map((l) => [l[1].level, l[1].body]), [["error", E.failedText("vscode", [])]]);
 });
