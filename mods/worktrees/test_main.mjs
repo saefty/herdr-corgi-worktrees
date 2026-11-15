@@ -45,7 +45,7 @@ function reset(w) {
     spaces: () => world.spaces.map((folder, i) => ({ id: `s${i}`, folder, tabs: [] })),
     shared: (k) => sharedNow.get(k) ?? null, setShared: (k, v) => { log.push(["shared", k]); sharedNow.set(k, v); },
     run: (...a) => log.push(["run", ...a]), notify: () => {}, openOverlay: () => {}, closeOverlay: () => {},
-    readTextFile: async () => null, nextCommand: () => never,
+    readTextFile: async (path) => world.text?.[path] ?? null, nextCommand: () => never,
     exec: async (cmd, args, opts) => {
       log.push(["exec", cmd, opts?.cwd ?? args.find((a) => a.endsWith(".py")) ?? "", args]);
       if (cmd === "find" && args[1] === `${HOME}/code`) return { code: 0, stderr: "", stdout: world.repos.map((p) => `${p}/.git\n`).join("") };
@@ -187,4 +187,14 @@ test("a PR mark's click hands an https address to the system and nothing else", 
   assert.deepEqual(log, []);
   Hub.openPr({ url: "https://example.org/pull/1", run: null }, cx);
   assert.deepEqual(asked("exec").map((l) => [l[1], l[3]]), [["xdg-open", ["https://example.org/pull/1"]]]);
+});
+
+test("a commit in a worktree whose repo is not under the roots is checked", async () => {
+  const wt = `${HOME}/code/feat-x`, gitdir = `${HOME}/Work/shop/.git/worktrees/feat-x`; // the repo itself is elsewhere
+  reset({ repos: [wt], spaces: [wt], text: { [`${wt}/.git`]: `gitdir: ${gitdir}\n` } });
+  await start();
+  assert.deepEqual([...live].map((h) => h.dir), [gitdir]); // watched by its own git folder
+  log.length = 0;
+  [...live][0].fire(["HEAD", "logs/HEAD", "COMMIT_EDITMSG"].map((f) => `${gitdir}/${f}`)); await settle();
+  assert.deepEqual(asked("exec").filter((l) => l[1] === "git").map((l) => l[2]), [wt]);
 });

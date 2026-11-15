@@ -441,7 +441,9 @@ export default class Worktrees extends View {
   touch(path, dir, changed, cx) {
     const wt = (p) => /\/\.git\/worktrees\/([^/]+)/.exec(p)?.[1] ?? null;
     const names = new Set(changed.map(wt).filter(Boolean));
-    const own = !changed.length || changed.some((p) => !wt(p));
+    // A worktree whose repo is not listed is watched by its own git folder (…/.git/worktrees/<name>): whatever
+    // changed there is its own.
+    const own = Boolean(this.byPath.get(path)?.main) || !changed.length || changed.some((p) => !wt(p));
     const remote = changed.some((p) => p === dir || p.includes("/refs/remotes/") || p.endsWith("/packed-refs") || p.endsWith("/FETCH_HEAD"));
     // Only index files moved: staging, or another tool's `git status` refreshing it (some do that every few
     // seconds). Neither changes what is pushed, so these wait for the once-a-minute round.
