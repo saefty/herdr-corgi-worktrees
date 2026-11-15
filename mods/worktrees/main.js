@@ -105,6 +105,8 @@ export default class Worktrees extends View {
     // While shown: the checkouts in use every STATUS_MS. While hidden: nothing, but remember it (render is not
     // called then), so that opening the panel checks all of them.
     cx.timer.every(TICK_MS, (cx) => {
+      // Another copy of the panel was closed and took the Go to rows with it (close): this one lists them again.
+      if (this.listed && !shared(`goto.items.${NAME}`)) this.publish();
       if (!shownNow()) { if (!this.away) { this.away = true; this.watchAll(cx); } } // hidden: the watches only a shown list needs are given back
       else if (this.tickAt && Date.now() - this.tickAt > STATUS_MS) cx.spawn((cx) => this.pass(cx, "tick", this.inUse()));
     });
@@ -124,8 +126,10 @@ export default class Worktrees extends View {
     cx.spawn(async (cx) => { for (;;) { this.command(String(await nextCommand()), cx); cx.notify(); } });
   }
 
-  // The last copy going (removed, quit): no rows in Go to that nobody would keep fresh.
+  // A copy going (removed, quit): no rows in Go to that nobody would keep fresh. A copy that stays (the docked panel
+  // when a window of it closes) lists them again at its next ten-second look.
   async close() {
+    this.listed = false;
     if (!this.hist && !this.menu && shared(`goto.items.${NAME}`)) setShared(`goto.items.${NAME}`, null);
   }
 
@@ -400,6 +404,7 @@ export default class Worktrees extends View {
     const items = this.cfg.goto ? M.gotoItems(g, spaceMap(new Set(this.repos.map((r) => r.path)))) : null;
     if (items && !(shared("goto.providers") ?? []).includes(NAME)) setShared("goto.providers", [...(shared("goto.providers") ?? []), NAME]);
     if (JSON.stringify(items) !== JSON.stringify(shared(`goto.items.${NAME}`) ?? null)) setShared(`goto.items.${NAME}`, items);
+    this.listed = Boolean(items);
   }
 
   // Re-check a repo when its .git changes: only the repos in use, at most WATCH_MAX of them (model.js watchPlan),

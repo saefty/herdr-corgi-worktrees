@@ -28,7 +28,7 @@ const EL = globalThis.EL = new Proxy(function () {}, { apply: () => EL, get: (_t
   : k === "drag_paths" ? (paths, ...more) => { drags.push([paths, ...more]); return EL; } : EL) });
 
 const HOME = "/h", repo = (n) => `${HOME}/code/r${n}`;
-let log, store, timers, world, live, peak;
+let log, store, timers, world, live, peak, sharedNow;
 const never = new Promise(() => {});
 // world: {checking, shown, repos: [paths find lists], spaces: [paths with a space], touched: [paths with a commit
 // from just now], refuse: [folders Herdr will not watch]}
@@ -40,7 +40,7 @@ function reset(w) {
     getItem: (k) => store.get(k) ?? null,
     setItem: (k, v) => { log.push(["store", k]); store.set(k, v); },
   } });
-  const sharedNow = new Map();
+  sharedNow = new Map(Object.entries(w.shared ?? {}));
   globalThis.H = {
     files: w.files ?? [],
     checking: () => world.checking, home: () => HOME, appHome: () => `${HOME}/app`, theme: () => ({}), settings: () => ({}), window: () => ({}),
@@ -213,4 +213,16 @@ test("a root whose own name starts with a dot is searched (the real find)", asyn
     // the hidden root itself and what is in it; still nothing hidden or pruned below a root
     assert.deepEqual(panel.repos.map((r) => r.path.slice(tmp.length)), ["/.dotfiles", "/.dotfiles/nvim", "/code/app", "/code/app/sub"]);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("Go to keeps its rows when one of two copies of the panel closes", async () => {
+  reset({ repos: [repo(1)], spaces: [repo(1)], shared: { "goto.api": { version: 1 } } });
+  const docked = await start(), tick = timers.find(([ms]) => ms === 10000)[1], windowed = await start();
+  assert.deepEqual(sharedNow.get("goto.items.worktrees"), []); // nothing needs a look in this world: an empty list, but a list
+  await windowed.close();
+  assert.equal(sharedNow.get("goto.items.worktrees"), null);
+  tick(cx);
+  assert.deepEqual(sharedNow.get("goto.items.worktrees"), []);
+  await docked.close(); log.length = 0; tick(cx); // the last one went: nothing lists them again by itself
+  assert.equal(sharedNow.get("goto.items.worktrees"), null);
 });
