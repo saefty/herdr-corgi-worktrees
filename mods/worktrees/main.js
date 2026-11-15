@@ -16,7 +16,7 @@ import History from "./history.js";
 import { parse } from "./status.js";
 import * as M from "./model.js";
 import { middle } from "./graph.js";
-import { editorLink, editorFor, rootInfo, rootRead, forgetRoots, checkoutOf, startOpen, openEditorMenu, menuCommand, renderMenu, setEditors, lookForEditors, haveEditors, SHORT_W } from "./editor-view.js";
+import { editorLink, editorFor, rootInfo, rootRead, forgetRoots, checkoutOf, startOpen, openEditorMenu, menuCommand, renderMenu, configure, lookForEditors, haveEditors, SHORT_W } from "./editor-view.js";
 
 const PARALLEL = 8;
 const RESCAN_MS = 30 * 60 * 1000;
@@ -188,7 +188,7 @@ export default class Worktrees extends View {
   // The settings: <app home>/<mod>.config.json, read before every scan.
   async loadConfig() {
     this.cfg = M.configOf(await readTextFile(`${appHome()}/${NAME}.config.json`).catch(() => null), home());
-    setEditors(this.cfg.editors);
+    configure(this.cfg);
   }
   // What the scan depends on, to tell a remembered list from other settings.
   where() { const { roots, worktreeRoots, prune, depth, max } = this.cfg; return JSON.stringify([roots, worktreeRoots, prune, depth, max]); }

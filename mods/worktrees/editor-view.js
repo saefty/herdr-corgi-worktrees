@@ -9,13 +9,18 @@ import * as E from "./editor.js";
 
 const KEY = "editors", DAY = 86400000, CHOICE = "editor.choice", OPENING_MS = 3000;
 let known = null, looking = null, asked = false, extra = []; // {at, found}; the lookup under way; one was queued; the settings' own editors
+let dry = false, settled; // "dryRun" in the settings; a click waits until the settings were read once
+const settings = new Promise((done) => { settled = done; });
 const roots = new Map();   // folder → {marks, common, linked, there}: read as files, once per folder
 const reading = new Map(); // folder → the promise of that read
 const opening = new Map(); // a target's key → until when its link says "Opening …" and takes no click
 export const SHORT_W = 40; // a row's reserved width for the monogram
 const tilde = (p) => (p.startsWith(`${home()}/`) ? `~${p.slice(home().length)}` : p);
 
-export const setEditors = (list) => { extra = E.extraEditors(list); }; // "editors" in the mod's settings file
+// The mod's settings (model.js configOf): "editors", and "dryRun": a click starts nothing and notes the program and
+// its arguments in the mod's storage (key "opened", the newest twenty). For test homes: a stand-in `open` on the PATH
+// is not enough there, a window that runs with your own home folder can still reach the real one.
+export const configure = (cfg) => { extra = E.extraEditors(cfg?.editors); dry = cfg?.dryRun === true; settled(); };
 const stored = () => { if (!known) { try { known = JSON.parse(localStorage.getItem(KEY) ?? "null"); } catch { known = null; } } return known; };
 
 // The installed editors, found by reading the files that say so (editor.js candidates). Within a day the remembered
@@ -26,10 +31,10 @@ export function lookForEditors(force = false) {
   return (looking ??= (async () => {
     const cands = E.candidates(home(), window()?.platform === "macos" ? "darwin" : "linux");
     const present = await Promise.all(cands.map((c) => readTextFile(c.path).then((x) => x !== null).catch(() => false)));
-    known = { at: Date.now(), found: E.foundFrom(cands, present) }; looking = null;
+    known = { at: Date.now(), found: E.foundFrom(cands, present) };
     try { localStorage.setItem(KEY, JSON.stringify(known)); } catch { /* kept in memory */ }
     return known.found;
-  })());
+  })().finally(() => { looking = null; })); // also after a failure: the next ask looks again
 }
 
 // Whether there is any editor to open things in (as far as the last look knows): rows keep room for a link only then.
@@ -81,11 +86,13 @@ export function editorFor(target, cx) {
 async function openIn(target, id = null) {
   const file = target.file ? E.safeFile(target.root, target.file) : null;
   if (target.file && !file) return "This path is not a file of the checkout.";
+  await settings; // never before "dryRun" is known
   const found = await lookForEditors();
   await rootRead(target.root);
   const use = id ?? editorFor(target, null)?.id;
   const argv = use ? E.openArgv(use, found[use], file ? { file, line: target.line ?? null } : { dir: target.root }, extra) : null;
   if (!argv) return "No editor to open this in was found.";
+  if (dry) { try { localStorage.setItem("opened", JSON.stringify([...JSON.parse(localStorage.getItem("opened") ?? "[]"), [argv[0], ...argv[1]]].slice(-20))); } catch { /* none */ } return null; }
   const r = await exec(argv[0], argv[1], { timeout: 20000 }).catch((e) => ({ code: 1, stderr: String(e) }));
   if (r.code === 0) return null;
   known = null; try { localStorage.removeItem(KEY); } catch { /* none */ } // it may be gone: look again the next time
@@ -103,20 +110,20 @@ export function startOpen(target, cx, id = null) {
   cx.spawn(async (cx) => { const note = await openIn(target, id); if (note) { opening.delete(keyOf(target)); notify({ title: "Open in editor", body: note, level: "error" }); cx.notify(); } });
 }
 
-// The ▾ menu, at most six entries ([label, command, muted, tooltip]): editor.js' own (the editor in use and why, the
-// other installed ones, "Copy path" for a file, "Look again"), a folder's "Copy path", and for a worktree's row
-// "Open the project folder instead". Other editors give way when there are more than six.
+// The ▾ menu, at most six entries ([label, command, muted, tooltip]), from editor.js' plain data: the editor in use
+// and why, the other installed ones, for a worktree's row "Open the project folder instead", "Copy path" (a folder's
+// is added here), "Look again". Other editors give way when there are more than six.
 export function menuOf(target) {
-  const r = roots.get(target.root) ?? { linked: false };
-  const items = E.menuItems({ now: editorFor(target, null), found: stored()?.found ?? {}, extra, linked: r.linked, file: target.file ?? null, line: target.line ?? null })
-    .map((m) => [m.label, m.act === null ? "editor-none" : m.act === "copy" ? "editor-copy" : m.act === "look" ? "editor-look" : `editor-${m.act}`, Boolean(m.muted), ""]);
-  const own = [
-    target.main && target.main.path !== target.root ? ["Open the project folder instead", "editor-main", false, `Open ${tilde(target.main.path)}${target.branch ? ` (the branch ${target.branch} is checked out in the worktree, not there)` : ""}.`] : null,
-    target.file ? null : ["Copy path", "editor-copy", false, tilde(target.root)],
-  ].filter(Boolean);
-  items.splice(items.length - 1, 0, ...own); // before "Look again"
-  for (let k = items.length - 1; k >= 0 && items.length > 6; k--) if (items[k][1].startsWith("editor-use:")) items.splice(k, 1);
-  return items;
+  const r = roots.get(target.root) ?? { linked: false }, main = target.main && target.main.path !== target.root ? target.main : null;
+  const project = main ? `Open ${tilde(main.path)}${target.branch ? ` (the branch ${target.branch} is checked out in the worktree, not there)` : ""}.` : null;
+  const data = E.menuItems({ now: editorFor(target, null), found: stored()?.found ?? {}, extra, linked: r.linked, file: target.file ?? null, line: target.line ?? null, project });
+  if (!target.file) data.splice(data.length - 1, 0, { kind: "copy", text: "Copy path", hint: tilde(target.root) });
+  for (let k = data.length - 1; k >= 0 && data.length > 6; k--) if (data[k].kind === "editor") data.splice(k, 1);
+  return data.map((m) => m.kind === "now" ? [`${m.text} · ${m.hint}`, "editor-none", true, ""]
+    : m.kind === "editor" ? [`${m.text}${m.hint ? ` (${m.hint})` : ""}`, `editor-use:${m.id}`, false, ""]
+    : m.kind === "project" ? [m.text, "editor-main", false, m.hint]
+    : m.kind === "copy" ? [target.file ? `${m.text} (${m.hint})` : m.text, "editor-copy", false, target.file ? "" : m.hint]
+    : [m.text, "editor-look", false, ""]);
 }
 export function openEditorMenu(view, target) {
   view.editorTarget = target;

@@ -127,13 +127,15 @@ export function linkTip(id, { dir = null, file = null, line = null, where = "", 
   if (!file) return `Open ${dir} in ${name}.`;
   return `Open ${file}${Number.isInteger(line) && line > 0 ? ` at line ${line}` : ""} in ${name}${where ? `, ${where}` : ""}.${foreign ? " Only the file is opened, not its folder: this PR is not trusted yet, and an editor can run a project's code when it opens a folder." : ""}`;
 }
-// The ▾ menu, at most six entries: the editor in use with why, the other installed ones (a pick opens and is kept
-// for this project's main checkout or for its worktrees), "Copy path" for a file, and "Look again".
-// [{label, act: "use:<id>" | "copy" | "look" | null (a line that says something), muted}]
-export function menuItems({ now = null, found = {}, extra = [], linked = false, file = null, line = null } = {}) {
-  const rest = installed(found, extra).filter((e) => e.id !== now?.id).slice(0, 3), scope = linked ? "worktrees of this repo" : "this repo";
-  return [...(now ? [{ label: `✓ ${editorName(now.id, extra)} · ${now.why}`, act: null, muted: true }] : []),
-    ...rest.map((e) => ({ label: `Always use ${e.name} for ${scope}${linked && e.id === "idea" ? " (imports the project and writes .idea/ into the worktree)" : ""}`, act: `use:${e.id}` })),
-    ...(file ? [{ label: `Copy path (${file.split("/").pop()}${line ? `:${line}` : ""})`, act: "copy" }] : []),
-    { label: "Look for installed editors again", act: "look" }];
+// The ▾ menu as data, at most six entries; the mod draws and runs them. [{kind, id?, text, hint?}]:
+// "now" the editor in use (hint: why it is that one), "editor" another installed one (a pick opens and is kept for
+// this project's main checkout or for its worktrees; hint: what it does to a worktree), "project" the project's own
+// folder instead of the worktree (only when `project` is given: its words for the hint, as a branch name or a path),
+// "copy" the path with its line (hint), "again" look for the installed editors anew.
+export function menuItems({ now = null, found = {}, extra = [], linked = false, file = null, line = null, project = null } = {}) {
+  const tail = [...(project ? [{ kind: "project", text: "Open the project folder instead", hint: String(project) }] : []),
+    ...(file ? [{ kind: "copy", text: "Copy path", hint: `${file.split("/").pop()}${line ? `:${line}` : ""}` }] : []), { kind: "again", text: "Look for installed editors again" }];
+  const head = now ? [{ kind: "now", id: now.id, text: `✓ ${editorName(now.id, extra)}`, hint: now.why }] : [], scope = linked ? "worktrees of this repo" : "this repo";
+  const rest = installed(found, extra).filter((e) => e.id !== now?.id).slice(0, Math.max(0, 6 - head.length - tail.length));
+  return [...head, ...rest.map((e) => ({ kind: "editor", id: e.id, text: `Always use ${e.name} for ${scope}`, ...(linked && e.id === "idea" ? { hint: "imports the project and writes .idea/ into the worktree" } : {}) })), ...tail];
 }

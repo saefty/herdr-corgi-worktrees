@@ -184,8 +184,9 @@ checkouts are marked "agent worktree" (the default is where Herdr puts them). `p
 entered. `max` caps the list, `weekDays` is what "this week" means, and `goto: false` keeps the checkouts out of
 Go to. `editors` adds editors of your own to "Open in your editor", or an editor in a place the mod does not look
 in: `{ "id": "nvim", "name": "Neovim", "folder": ["my-terminal", "-e", "nvim", "{dir}"], "file": ["my-terminal", "-e",
-"nvim", "+{line}", "{file}"] }`; each is a program with its arguments, never a shell line. After a change press ↻
-in the panel.
+"nvim", "+{line}", "{file}"] }`; each is a program with its arguments, never a shell line. `"dryRun": true` is for
+trying the mod out in a second Herdr home: an editor link starts nothing and notes the program and its arguments in
+the mod's storage (`data/worktrees/store*.json`, key `opened`). After a change press ↻ in the panel.
 
 ## Customize
 

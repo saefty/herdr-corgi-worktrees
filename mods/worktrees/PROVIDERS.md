@@ -160,6 +160,10 @@ All keys optional; the values below are the defaults.
 - `editors`: more editors for "Open in your editor": `[{ "id", "name", "folder": [program, args…], "file":
   [program, args…] }]` with `{dir}`, `{file}` and `{line}` in the arguments. A program and its arguments, never a
   shell line.
+- `dryRun` (not in the defaults above; `false`): `true` makes "Open in your editor" start nothing. What it would
+  have started is noted in the mod's storage, `data/worktrees/store*.json` under the Herdr home, key `opened`
+  (the newest twenty, each a program and its arguments). Use it in a test home: a stand-in `open` on the PATH is
+  only safe when that Herdr window runs with a home folder of its own, as the demo does.
 - `roots`: the folders searched for git checkouts, `depth` levels deep. Hidden folders and the names in `prune`
   are never entered. A root is never `/` or the home folder itself.
 - `worktreeRoots`: folders whose checkouts are marked "agent worktree". The default is where Herdr's worktree mod

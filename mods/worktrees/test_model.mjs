@@ -20,7 +20,7 @@ assert.deepEqual(C0.roots, [`${H}/code`, `${H}/src`, `${H}/projects`, `${H}/dev`
 assert.deepEqual(C0.worktreeRoots, [`${H}/.herdr/worktrees`]);
 assert.deepEqual([C0.depth, C0.max, C0.weekDays, C0.goto], [4, 500, 7, true]);
 const C1 = M.configOf('{"roots":["~/work","/srv/git","rel","/","~"],"worktreeRoots":[],"prune":["vendor","a/b"],"depth":99,"max":0,"weekDays":14,"goto":false}', H);
-assert.deepEqual(C1, { roots: [`${H}/work`, "/srv/git", `${H}/rel`], worktreeRoots: [], prune: ["vendor"], depth: 8, max: 1, weekDays: 14, goto: false, editors: [] }); // never "/" or the home
+assert.deepEqual(C1, { roots: [`${H}/work`, "/srv/git", `${H}/rel`], worktreeRoots: [], prune: ["vendor"], depth: 8, max: 1, weekDays: 14, goto: false, editors: [], dryRun: false }); // never "/" or the home
 assert.deepEqual(M.configOf("not json", H), C0);
 assert.deepEqual(M.configOf('["a"]', H).roots, C0.roots);
 assert.equal(M.rootOf(`${H}/codex/x`, C0.roots), null); // a prefix stops at "/"

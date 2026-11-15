@@ -35,6 +35,7 @@ export function configOf(text, home) {
     weekDays: int(doc.weekDays, DEFAULTS.weekDays, 1, 365),
     goto: doc.goto !== false,
     editors: Array.isArray(doc.editors) ? doc.editors : [], // more editors for "Open in <Editor>" (editor.js extraEditors)
+    dryRun: doc.dryRun === true, // "Open in <Editor>" starts nothing and notes what it would have started
   };
 }
 

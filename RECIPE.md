@@ -175,7 +175,9 @@ menu is the mod's own copy in a popup (`props.menu`); its entries are commands t
 - A command may name a folder no link has shown yet: wait for the folder's facts before choosing the editor, or a
   Gradle project opens in the wrong one.
 - In the demo `open` is a script first on the PATH that writes its arguments to `demo/run/opened.txt`, and both
-  editors are empty app folders in the stand-in home: no editor is ever started.
+  editors are empty app folders in the stand-in home: no editor is ever started. That only holds because the demo
+  window runs with a home of its own: a test window started with your real home reached the real `open` here.
+  For such a window set `"dryRun": true` in the settings; a click then waits for the settings and starts nothing.
 
 **Done when:** `herdr-app check mods/worktrees` passes, `node --test mods/worktrees/test_model.mjs
 mods/worktrees/test_graph.mjs` passes, "History ↗" on `atlas-platform` in the demo shows main as the left lane

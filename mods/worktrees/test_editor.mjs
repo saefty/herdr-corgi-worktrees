@@ -71,8 +71,12 @@ assert.deepEqual([linkLabel("idea"), shortLabel("idea"), shortLabel("vscode"), o
 assert.equal(linkTip("vscode", { dir: "/co" }), "Open /co in VS Code.");
 assert.equal(linkTip("vscode", { dir: "/co", file: "src/api/limits.ts", line: 42, where: "in the checkout of this PR" }), "Open src/api/limits.ts at line 42 in VS Code, in the checkout of this PR.");
 assert.match(linkTip("idea", { file: "A.java", line: 5, foreign: true }), /^Open A\.java at line 5 in IntelliJ IDEA\. Only the file is opened, not its folder: .*$/);
-const menu = menuItems({ now: { id: "idea", why: "suggested: a JVM file" }, found: { ...found, cursor: { app: "/c" }, zed: { app: "/z" } }, file: "src/A.java", line: 5 });
-assert.deepEqual(menu.map((m) => [m.label, m.act]), [["✓ IntelliJ IDEA · suggested: a JVM file", null], ["Always use VS Code for this repo", "use:vscode"], ["Always use Cursor for this repo", "use:cursor"], ["Always use Zed for this repo", "use:zed"], ["Copy path (A.java:5)", "copy"], ["Look for installed editors again", "look"]]);
-assert.ok(menu.length <= 6);
-assert.deepEqual(menuItems({ now: { id: "vscode", why: "suggested: a worktree" }, found, linked: true }).map((m) => m.label)[1], "Always use IntelliJ IDEA for worktrees of this repo (imports the project and writes .idea/ into the worktree)");
+const four = { ...found, cursor: { app: "/c" }, zed: { app: "/z" } };
+const menu = menuItems({ now: { id: "idea", why: "suggested: a JVM file" }, found: four, file: "src/A.java", line: 5 });
+assert.deepEqual(menu, [{ kind: "now", id: "idea", text: "✓ IntelliJ IDEA", hint: "suggested: a JVM file" }, { kind: "editor", id: "vscode", text: "Always use VS Code for this repo" }, { kind: "editor", id: "cursor", text: "Always use Cursor for this repo" },
+  { kind: "editor", id: "zed", text: "Always use Zed for this repo" }, { kind: "copy", text: "Copy path", hint: "A.java:5" }, { kind: "again", text: "Look for installed editors again" }]);
+const wt = menuItems({ now: { id: "vscode", why: "suggested: a worktree" }, found: four, linked: true, file: "a.py", project: "main" });
+assert.deepEqual([wt.length, wt.map((m) => m.kind), wt[1]], [6, ["now", "editor", "editor", "project", "copy", "again"], { kind: "editor", id: "idea", text: "Always use IntelliJ IDEA for worktrees of this repo", hint: "imports the project and writes .idea/ into the worktree" }],
+  "never more than six: the other editors give way to the project folder, Copy path and Look again");
+assert.deepEqual(menuItems({ found: {} }), [{ kind: "again", text: "Look for installed editors again" }]);
 console.log("editor ok");

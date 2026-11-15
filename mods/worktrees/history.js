@@ -15,7 +15,7 @@ import * as M from "./model.js";
 import * as G from "./graph.js";
 import { prsNow, openPr, prWhere, openFolder } from "./hub.js";
 import * as E from "./editor.js";
-import { editorLink, startOpen, menuCommand, setEditors } from "./editor-view.js";
+import { editorLink, startOpen, menuCommand, configure } from "./editor-view.js";
 
 const ROW = 26;        // every row's height
 const MAX = 400;       // commits per load; "Load more" doubles it
@@ -57,7 +57,7 @@ export default class History {
     this.input.on("change", (_e, cx) => { this.filter = this.input.value().trim().toLowerCase(); this.arrange(); cx.notify(); });
     this.input.on("submit", () => this.handle.focus());
     cx.spawn((cx) => this.load(cx));
-    readTextFile(`${appHome()}/${NAME}.config.json`).then((text) => setEditors(M.configOf(text, home()).editors)).catch(() => null); // the settings' own editors
+    readTextFile(`${appHome()}/${NAME}.config.json`).catch(() => null).then((text) => configure(M.configOf(text, home()))); // the settings' own editors, "dryRun"
     // Commands ("<mod>.h-…", for keys and scripts): h-mode:branches|branch|all, h-filter:<text>, h-select:<row | hash | branch>,
     // h-unfold:<n | all>, h-more, h-refresh, h-esc, h-branch:<name>, h-pick:<branch>, h-lanes:next|prev.
     // "focus" comes from pane.go.
