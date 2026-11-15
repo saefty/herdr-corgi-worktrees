@@ -3,11 +3,11 @@
 // look at a folder, "Opening …" for three seconds, and a toast only when it did not open.
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { exec, run, shared, setShared, readTextFile, openOverlay, closeOverlay, props, theme, home, notify, window } from "herdr";
+import { exec, run, shared, setShared, readTextFile, openOverlay, closeOverlay, props, theme, home, notify } from "herdr";
 import { NAME } from "./name.js";
 import * as E from "./editor.js";
 
-const KEY = "editors", DAY = 86400000, CHOICE = "editor.choice", OPENING_MS = 3000;
+const KEY = "editors", DAY = 86400000, RETRY_MS = 600000, CHOICE = "editor.choice", OPENING_MS = 3000;
 let known = null, looking = null, asked = false, extra = []; // {at, found}; the lookup under way; one was queued; the settings' own editors
 let dry = false, settled; // "dryRun" in the settings; a click waits until the settings were read once
 const settings = new Promise((done) => { settled = done; });
@@ -21,7 +21,7 @@ const tilde = (p) => (p.startsWith(`${home()}/`) ? `~${p.slice(home().length)}` 
 // its arguments in the mod's storage (key "opened", the newest twenty). For test homes: a stand-in `open` on the PATH
 // is not enough there, a window that runs with your own home folder can still reach the real one.
 export const configure = (cfg) => { extra = E.extraEditors(cfg?.editors); dry = cfg?.dryRun === true; settled(); };
-const stored = () => { if (!known) { try { known = JSON.parse(localStorage.getItem(KEY) ?? "null"); } catch { known = null; } } return known; };
+const stored = () => { if (!known) { try { known = JSON.parse(localStorage.getItem(KEY) ?? "null"); } catch { known = null; } if (known && !Object.keys(known.found ?? {}).length) known = null; } return known; };
 
 // The installed editors, found by reading the files that say so (editor.js candidates). Within a day the remembered
 // answer is taken (force: the menu's "Look again", and after an editor could not be started).
@@ -29,11 +29,15 @@ export function lookForEditors(force = false) {
   const s = stored();
   if (!force && s && Date.now() - s.at < DAY) return Promise.resolve(s.found);
   return (looking ??= (async () => {
-    const cands = E.candidates(home(), window()?.platform === "macos" ? "darwin" : "linux");
+    // Both systems' places are read (about forty small reads): what the window says about its system is not there
+    // yet when a mod starts, and a wrong guess would find nothing.
+    const cands = [...E.candidates(home(), "darwin"), ...E.candidates(home(), "linux")];
     const present = await Promise.all(cands.map((c) => readTextFile(c.path).then((x) => x !== null).catch(() => false)));
-    known = { at: Date.now(), found: E.foundFrom(cands, present) };
-    try { localStorage.setItem(KEY, JSON.stringify(known)); } catch { /* kept in memory */ }
-    return known.found;
+    const found = E.foundFrom(cands, present), none = !Object.keys(found).length;
+    // "None" is only believed for ten minutes and never kept across starts: it may have been a bad moment to look.
+    known = { at: none ? Date.now() - DAY + RETRY_MS : Date.now(), found };
+    if (!none) { try { localStorage.setItem(KEY, JSON.stringify(known)); } catch { /* kept in memory */ } }
+    return found;
   })().finally(() => { looking = null; })); // also after a failure: the next ask looks again
 }
 
@@ -78,7 +82,9 @@ export async function checkoutOf(path, knownRoots = []) {
 export function editorFor(target, cx) {
   if (!target?.root) return null;
   const s = stored(), r = rootInfo(target.root, cx);
-  if (!s) { if (!looking && !asked && cx) { asked = true; later(cx, () => lookForEditors().finally(() => { asked = false; })); } return null; }
+  // not known yet, or the answer is too old: look (after this render) and draw again
+  if ((!s || Date.now() - s.at >= DAY) && !looking && !asked && cx) { asked = true; later(cx, () => lookForEditors().finally(() => { asked = false; })); }
+  if (!s) return null;
   return E.editorOf({ file: target.file ?? null, marks: r.marks, linked: r.linked, choice: shared(CHOICE), key: r.common, found: s.found, extra });
 }
 
