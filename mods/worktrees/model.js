@@ -7,7 +7,7 @@ export const DAY = 24 * 60 * 60 * 1000;
 
 export const DEFAULTS = {
   roots: ["~/code", "~/src", "~/projects", "~/dev"],  // folders searched for git checkouts
-  worktreeRoots: ["~/.herdr/worktrees"],                // where Herdr's worktree mod puts agents' checkouts
+  worktreeRoots: ["~/.herdr/worktrees"],                // agents' checkouts; Herdr's own folder for them is added (herdrWorktrees)
   prune: ["node_modules", "build", "dist", "target", ".venv", ".terraform"], // folder names never entered
   depth: 4,                                             // how deep under a root a checkout may be
   max: 500,                                             // at most this many checkouts
@@ -19,16 +19,26 @@ const abs = (dir, home) => norm(dir === "~" || dir.startsWith("~/") ? `${home}${
 const list = (v, fallback) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x) : fallback);
 const int = (v, fallback, lo, hi) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : fallback);
 
+// Where Herdr's New worktree puts checkouts: "worktrees": {"directory"} in the settings.json of the Herdr home, an
+// absolute path or one from "~"; anything else, or no file, is Herdr's default.
+export function herdrWorktrees(text, home) {
+  let dir = null;
+  try { dir = JSON.parse(text ?? "null")?.worktrees?.directory; } catch {}
+  return abs(typeof dir === "string" && /^(~$|~\/|\/)/.test(dir) ? dir : DEFAULTS.worktreeRoots[0], home);
+}
+
 // The settings with defaults filled in and folders made absolute ("~/x", "/x", or relative to the home).
 // A root is never "/" or the home itself. Text that is not JSON counts as no file.
-export function configOf(text, home) {
+// herdrDir (herdrWorktrees): one more worktree root, unless "worktreeRoots": [] turned agents' worktrees off.
+export function configOf(text, home, herdrDir = null) {
   let doc = null;
   try { doc = text ? JSON.parse(text) : null; } catch {}
   doc = doc && typeof doc === "object" ? doc : {};
   const dirs = (v, fallback) => [...new Set(list(v, fallback).map((d) => abs(d, home)))].filter((d) => d !== "/" && d !== norm(home));
+  const agents = list(doc.worktreeRoots, DEFAULTS.worktreeRoots);
   return {
     roots: dirs(doc.roots, DEFAULTS.roots),
-    worktreeRoots: dirs(doc.worktreeRoots, DEFAULTS.worktreeRoots),
+    worktreeRoots: dirs(agents.length && herdrDir ? [...agents, herdrDir] : agents, []),
     prune: list(doc.prune, DEFAULTS.prune).filter((n) => !n.includes("/")),
     depth: int(doc.depth, DEFAULTS.depth, 1, 8),
     max: int(doc.max, DEFAULTS.max, 1, 5000),

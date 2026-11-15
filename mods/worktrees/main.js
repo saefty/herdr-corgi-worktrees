@@ -188,9 +188,11 @@ export default class Worktrees extends View {
 
   setShow(k) { this.show = k; try { localStorage.setItem("show", k); } catch {} }
 
-  // The settings: <app home>/<mod>.config.json, read before every scan.
+  // The settings: <app home>/<mod>.config.json, and from Herdr's own settings.json where New worktree puts checkouts
+  // ("worktrees": {"directory"}): that folder is a worktree root too. Both are read before every scan.
   async loadConfig() {
-    this.cfg = M.configOf(await readTextFile(`${appHome()}/${NAME}.config.json`).catch(() => null), home());
+    const [own, herdr] = await Promise.all([`${NAME}.config.json`, "settings.json"].map((f) => readTextFile(`${appHome()}/${f}`).catch(() => null)));
+    this.cfg = M.configOf(own, home(), M.herdrWorktrees(herdr, home()));
     configure(this.cfg);
   }
   // What the scan depends on, to tell a remembered list from other settings.

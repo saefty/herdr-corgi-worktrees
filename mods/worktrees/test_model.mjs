@@ -23,6 +23,17 @@ const C1 = M.configOf('{"roots":["~/work","/srv/git","rel","/","~"],"worktreeRoo
 assert.deepEqual(C1, { roots: [`${H}/work`, "/srv/git", `${H}/rel`], worktreeRoots: [], prune: ["vendor"], depth: 8, max: 1, weekDays: 14, goto: false, editors: [], dryRun: false }); // never "/" or the home
 assert.deepEqual(M.configOf("not json", H), C0);
 assert.deepEqual(M.configOf('["a"]', H).roots, C0.roots);
+// Herdr's own folder for new worktrees (settings.json of the Herdr home) is one more worktree root
+const HW = (doc) => M.herdrWorktrees(doc === undefined ? null : JSON.stringify(doc), H);
+assert.deepEqual([HW(), HW({}), HW({ worktrees: {} }), HW({ worktrees: { directory: 7 } }), M.herdrWorktrees("{ not json", H)], Array(5).fill(`${H}/.herdr/worktrees`));
+assert.deepEqual([HW({ worktrees: { directory: "~/Developer/worktrees" } }), HW({ worktrees: { directory: "/srv/wt/" } }), HW({ worktrees: { directory: "~" } })], [`${H}/Developer/worktrees`, "/srv/wt", H]);
+assert.deepEqual([HW({ worktrees: { directory: "rel/wt" } }), HW({ worktrees: { directory: "~other/wt" } })], Array(2).fill(`${H}/.herdr/worktrees`)); // neither absolute nor from "~": Herdr's default
+assert.deepEqual(M.configOf(null, H, `${H}/.herdr/worktrees`).worktreeRoots, [`${H}/.herdr/worktrees`]); // the default, once
+assert.deepEqual(M.configOf(null, H, `${H}/Developer/worktrees`).worktreeRoots, [`${H}/.herdr/worktrees`, `${H}/Developer/worktrees`]); // checkouts made before the setting stay listed
+assert.deepEqual(M.configOf('{"worktreeRoots":["~/wt"]}', H, "/srv/wt").worktreeRoots, [`${H}/wt`, "/srv/wt"]);
+assert.deepEqual(M.configOf('{"worktreeRoots":[]}', H, "/srv/wt").worktreeRoots, []); // [] turns agents' worktrees off
+assert.deepEqual(M.configOf(null, H, H).worktreeRoots, [`${H}/.herdr/worktrees`]); // never the home itself
+assert.equal(M.describe("/srv/wt/gadgets/feat-x", `gitdir: ${H}/src/gadgets/.git/worktrees/feat-x`, M.configOf(null, H, "/srv/wt")).kind, "agent");
 assert.equal(M.rootOf(`${H}/codex/x`, C0.roots), null); // a prefix stops at "/"
 assert.equal(M.rootOf("/a/b/c", ["/a", "/a/b"]), "/a/b"); // the nearest root
 

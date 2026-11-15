@@ -122,7 +122,8 @@ what to show, folds, lanes, colors, name shortening), `status.js` (pure: the por
 mod's name in one place), `mod.json` (`place: none`, `focusable`, and an overlay so `mod.open` shows the panel as a
 window). It uses `exec` for `find`, `python3`, `git` and (without python3) `stat`, `readTextFile` for `.git` files,
 `watchFolder`, `spaces() panes() layout()`, `nextCommand()`, and `localStorage` for the list of checkouts and the
-last pass. Settings: `worktrees.config.json` in the app home.
+last pass. Settings: `worktrees.config.json` in the app home, and from Herdr's own `settings.json` there the
+folder New worktree creates checkouts in (`worktrees.directory`, else `~/.herdr/worktrees`): one more worktree root.
 
 **Watch out:**
 - Measure what a process start costs before choosing a design: here it was 0.25 s for any program, so 300

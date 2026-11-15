@@ -181,8 +181,12 @@ The panel is made for 380 px and works from about 280 px.
 ```
 
 `roots` are the folders searched for git checkouts and `depth` how deep. `worktreeRoots` are folders whose
-checkouts are marked "agent worktree" (the default is where Herdr puts them). `prune` are folder names never
-entered. `max` caps the list, `weekDays` is what "this week" means, and `goto: false` keeps the checkouts out of
+checkouts are marked "agent worktree". The folder Herdr's New worktree creates checkouts in is searched too,
+without a setting here: the mod reads `"worktrees": { "directory": … }` from Herdr's `settings.json`
+(`~/.herdr/worktrees` when it is not set). Worktrees made before you changed that folder stay listed as long as
+their folder is under one of the roots; any other worktree of a listed repo shows in its branch card and its
+history, which ask git where each branch is checked out. `"worktreeRoots": []` lists no agent worktrees. `prune`
+are folder names never entered. `max` caps the list, `weekDays` is what "this week" means, and `goto: false` keeps the checkouts out of
 Go to. `editors` adds editors of your own to "Open in your editor", or an editor in a place the mod does not look
 in: `{ "id": "nvim", "name": "Neovim", "folder": ["my-terminal", "-e", "nvim", "{dir}"], "file": ["my-terminal", "-e",
 "nvim", "+{line}", "{file}"] }`; each is a program with its arguments, never a shell line. `"dryRun": true` is for
@@ -194,7 +198,8 @@ does the same. After a change press ↻ in the panel.
 
 Without touching code:
 
-- **Where it looks:** `roots`, `depth` and `prune` in `worktrees.config.json`.
+- **Where it looks:** `roots`, `depth` and `prune` in `worktrees.config.json`, and Herdr's own worktree folder
+  (`worktrees.directory` in Herdr's `settings.json`).
 - **What "this week" means:** `weekDays`.
 - **Keys:** every click has a command (`worktrees.refresh`, `worktrees.show:all`, `worktrees.expand:<repo>`, …);
   the list is in [PROVIDERS.md](mods/worktrees/PROVIDERS.md#4-commands).

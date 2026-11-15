@@ -19,3 +19,5 @@
 - Watches are given back: a repo that is no longer in use, a checkout that is gone and, while the panel is hidden,
   every repo without a space cancel their watch, so the mod no longer fills Herdr's 64 watched folders. A repo is
   read once when its watch starts.
+- Herdr's own worktree folder (`worktrees.directory` in Herdr's `settings.json`, new in herdr-app 0.1.16) is
+  searched and its checkouts are marked "agent worktree", next to `worktreeRoots`.

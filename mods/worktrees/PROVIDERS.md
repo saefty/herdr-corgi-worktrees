@@ -168,8 +168,9 @@ All keys optional; the values below are the defaults.
   folder Herdr's `exec` takes the PATH of your login shell, whatever PATH the window was started with.
 - `roots`: the folders searched for git checkouts, `depth` levels deep. Hidden folders and the names in `prune`
   are never entered. A root is never `/` or the home folder itself.
-- `worktreeRoots`: folders whose checkouts are marked "agent worktree". The default is where Herdr's worktree mod
-  puts them. `[]` turns it off.
+- `worktreeRoots`: folders whose checkouts are marked "agent worktree". The folder Herdr's New worktree creates
+  checkouts in is added to them: `"worktrees": { "directory" }` in the `settings.json` of the Herdr home (an
+  absolute path or one from `~`), else `~/.herdr/worktrees`. `[]` turns it off, Herdr's folder included.
 - `max`: at most this many checkouts are listed (each one is a `git status` per pass).
 - `weekDays`: how young tracked changes must be for "Changed this week".
 - `goto`: `false` keeps the checkouts out of Go to.
