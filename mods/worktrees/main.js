@@ -9,7 +9,7 @@
 // rows in Go to; it publishes how many repos are not pushed.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { theme, shared, setShared, exec, home, appHome, run, focused, layout, props, settings, spaces, panes, openOverlay, watchFolder, readTextFile, nextCommand, notify } from "herdr";
+import { theme, shared, setShared, exec, home, appHome, run, focused, layout, props, settings, spaces, panes, openOverlay, watchFolder, readTextFile, nextCommand, notify, checking } from "herdr";
 import { NAME } from "./name.js";
 import { key, prsNow, openPr, prWhere, spaceMap, openFolder } from "./hub.js";
 import History from "./history.js";
@@ -54,7 +54,6 @@ export default class Worktrees extends View {
     // A copy opened with props {history: <checkout path>, …} is the history view of that checkout (history.js).
     if (props()?.history) { this.hist = new History(props(), cx); return; }
     if (props()?.menu) { this.menu = true; return; } // the ▾ menu of an "Open in <Editor>" link (editor-view.js)
-    if (shared(key("api"))?.version !== 1) setShared(key("api"), { version: 1 });
     this.cfg = M.configOf(null, home());
     this.show = localStorage.getItem("show") === "all" ? "all" : "needs";
     this.info = {};          // path -> parsed status (+ local: commits on no remote), or {error}
@@ -85,6 +84,10 @@ export default class Worktrees extends View {
       }
       this.fullAt = this.checkedAt = state.at ?? null;
     }
+    // `herdr-app check` runs init for real: the check gets the remembered list to draw, and that is all. No process
+    // (find, probe.py, git), no watch, no timer, nothing published or stored.
+    if (checking()) return;
+    if (shared(key("api"))?.version !== 1) setShared(key("api"), { version: 1 });
     cx.spawn(async (cx) => {
       await this.loadConfig();
       // The remembered list serves for RESCAN_MS, unless the settings say to look elsewhere now.

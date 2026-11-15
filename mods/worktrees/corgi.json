@@ -2,7 +2,7 @@
   "name": "worktrees",
   "version": "0.1.0",
   "requires": {
-    "herdr-app": ">=0.1.15"
+    "herdr-app": ">=0.1.16"
   },
   "provides": {
     "worktrees-api": 1

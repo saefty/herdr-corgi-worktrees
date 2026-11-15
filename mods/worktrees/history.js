@@ -9,7 +9,7 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar, InputState, Input } from "gpui-base";
 import * as fs from "fs/promises";
-import { theme, exec, run, spaces, home, appHome, settings, readTextFile, nextCommand } from "herdr";
+import { theme, exec, run, spaces, home, appHome, settings, readTextFile, nextCommand, checking } from "herdr";
 import { NAME } from "./name.js";
 import * as M from "./model.js";
 import * as G from "./graph.js";
@@ -56,6 +56,7 @@ export default class History {
     this.input = InputState.new({ placeholder: "Filter by branch or subject…" });
     this.input.on("change", (_e, cx) => { this.filter = this.input.value().trim().toLowerCase(); this.arrange(); cx.notify(); });
     this.input.on("submit", () => this.handle.focus());
+    if (checking()) return; // `herdr-app check`: an empty view is drawn, git is not asked
     cx.spawn((cx) => this.load(cx));
     readTextFile(`${appHome()}/${NAME}.config.json`).catch(() => null).then((text) => configure(M.configOf(text, home()))); // the settings' own editors, "dryRun"
     // Commands ("<mod>.h-…", for keys and scripts): h-mode:branches|branch|all, h-filter:<text>, h-select:<row | hash | branch>,

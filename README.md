@@ -4,7 +4,7 @@
 
 <p align="center"><img src="preview.png" width="88%" alt="A repo's history as a drawn tree next to the Herdr sidebar" /></p>
 
-<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT &nbsp;·&nbsp; ✓&nbsp;Runs&nbsp;locally,&nbsp;never&nbsp;fetches &nbsp;·&nbsp; ✓&nbsp;herdr-app&nbsp;0.1.15+</sub></p>
+<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT &nbsp;·&nbsp; ✓&nbsp;Runs&nbsp;locally,&nbsp;never&nbsp;fetches &nbsp;·&nbsp; ✓&nbsp;herdr-app&nbsp;0.1.16+</sub></p>
 
 Part of [Corgi](https://github.com/saefty/herdr-corgi), a set of Herdr mods that plug into each other.
 

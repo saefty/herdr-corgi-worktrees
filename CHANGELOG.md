@@ -14,3 +14,5 @@
   or one from the settings) from the row, the branch card and the history view, and with `worktrees.editor` from a
   key. The editor is suggested by the kind of project and can be picked per repo; the pick is shared with PR
   review. New optional requirement: one of these editors (see README, Requirements).
+- Needs herdr-app 0.1.16. `herdr-app check` on the mod starts no process, watches nothing and stores nothing: the
+  check draws the remembered list.
