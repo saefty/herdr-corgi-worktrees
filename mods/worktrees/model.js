@@ -246,8 +246,16 @@ export function spaceRepos(paths, folders) {
 
 const RANK = { open: 0, draft: 0, merged: 1, closed: 2 };
 
+// What a click may hand to the system's `open`: a web address and nothing else. A provider's `url` is someone
+// else's text, and `open` would start a "file:" address or an app's path just as readily.
+export const webUrl = (url) => (typeof url === "string" && /^https:\/\/[^\s\u0000-\u001f\u007f]+$/.test(url) ? url : null);
+
 // A provider's commands for one PR: every "{url}", "{repo}", "{number}", "{branch}" in the strings filled in.
-const fill = (v, pr) => (typeof v === "string" ? v.replace(/\{(url|repo|number|branch)\}/g, (_m, k) => String(pr[k] ?? ""))
+// The values are someone else's text (a branch is named by the PR's author: ";", "$(…)" and backticks are legal in
+// a branch name). Each one stays inside the string it was written in, so in an argv it is one argument whatever it
+// holds; control characters are dropped. Nothing here can make a template safe that builds a shell line.
+const plain = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, "");
+const fill = (v, pr) => (typeof v === "string" ? v.replace(/\{(url|repo|number|branch)\}/g, (_m, k) => plain(pr[k]))
   : Array.isArray(v) ? v.map((x) => fill(x, pr)) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fill(x, pr)])) : v);
 
 // docs: what each provider published, {at, run, prs: [{repo: "owner/name", branch, number, state, url, base,
@@ -263,7 +271,7 @@ export function prIndex(docs) {
     for (const p of doc.prs) {
       if (!p || typeof p.repo !== "string" || typeof p.branch !== "string" || !p.branch || !Number.isFinite(+p.number)) continue;
       const pr = { repo: p.repo, number: +p.number, state: p.state in RANK ? p.state : "unknown", branch: p.branch, base: p.base ?? null, headSha: p.headSha ?? null,
-        url: typeof p.url === "string" ? p.url : null, updatedAt: typeof p.updatedAt === "string" ? p.updatedAt : "" };
+        url: webUrl(p.url), updatedAt: typeof p.updatedAt === "string" ? p.updatedAt : "" };
       pr.run = Array.isArray(p.run) ? p.run : Array.isArray(doc.run) ? fill(doc.run, pr) : null;
       const heads = by.get(p.repo) ?? by.set(p.repo, new Map()).get(p.repo);
       const old = heads.get(p.branch);

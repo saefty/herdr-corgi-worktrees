@@ -156,6 +156,16 @@ const tpl = M.prIndex([{ at: 1, run: [["layout.show", { id: "panel" }], ["review
 assert.deepEqual(M.prFor(tpl, "acme/widgets", "a").run, [["layout.show", { id: "panel" }], ["review.pick:acme/widgets#5", { url: "https://example.org/5", n: 3 }]]);
 assert.deepEqual(M.prFor(tpl, "acme/widgets", "b").run, [["x", {}]]);
 assert.equal(M.prFor(prs, "acme/widgets", "feat/x").run, null);
+// a provider's url is only kept when it is a web address: a click hands it to the system's `open`
+assert.deepEqual(["https://example.org/pull/5", "http://example.org/5", "file:///Applications/Calculator.app", "/Applications/Calculator.app", "https://example.org/a b", "https://example.org/a\nb", "javascript:alert(1)", " https://example.org", 7, null].map(M.webUrl),
+  ["https://example.org/pull/5", null, null, null, null, null, null, null, null, null]);
+assert.equal(M.prFor(M.prIndex([{ prs: [{ repo: "acme/widgets", branch: "a", number: 5, url: "file:///etc/passwd" }] }]), "acme/widgets", "a").url, null);
+// a branch name is its author's text: in an argv it stays the one argument it was written as, whatever it holds
+const evil = "x; rm -rf ~ $(id) `id` 'q' \"q\" --upload-pack=evil", argvTpl = [["pane.split", { direction: "down", argv: ["git", "switch", "--", "{branch}"] }], ["mymod.show:{branch}", { note: "PR {number}: {branch}" }]];
+const filled = M.prFor(M.prIndex([{ run: argvTpl, prs: [{ repo: "acme/widgets", branch: evil, number: 9 }] }]), "acme/widgets", evil).run;
+assert.deepEqual(filled, [["pane.split", { direction: "down", argv: ["git", "switch", "--", evil] }], [`mymod.show:${evil}`, { note: `PR 9: ${evil}` }]]);
+assert.deepEqual(M.prFor(M.prIndex([{ run: [["x", { argv: ["echo", "{branch}"] }]], prs: [{ repo: "a/b", branch: "one\ntwo\u0000\u001b[2Jthree", number: 1 }] }]), "a/b", "one\ntwo\u0000\u001b[2Jthree").run,
+  [["x", { argv: ["echo", "onetwo[2Jthree"] }]]); // control characters never reach a command
 
 // ---- branch card
 assert.deepEqual(M.baseCandidates("ref: refs/remotes/origin/trunk\n"), ["trunk", "origin/trunk", "main", "origin/main", "master", "origin/master"]);

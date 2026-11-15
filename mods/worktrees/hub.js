@@ -29,13 +29,14 @@ export function act(context, list, cx) {
 }
 
 // A PR mark's click: what its provider says (`run`), else the PR review mod when it is there (its hand-over
-// "pr.goto"), else the browser.
+// "pr.goto"), else the browser. Only an https address goes anywhere (model.js webUrl): never a file or an app.
 export function openPr(pr, cx) {
+  const url = M.webUrl(pr.url);
   if (pr.run) runAll(pr.run, cx);
-  else if (pr.url && shared("review.layout")) setShared("pr.goto", { url: pr.url });
-  else if (pr.url) exec(window()?.platform === "macos" ? "open" : "xdg-open", [pr.url]).catch(() => null);
+  else if (url && shared("review.layout")) setShared("pr.goto", { url });
+  else if (url) exec(window()?.platform === "macos" ? "open" : "xdg-open", [url]).catch(() => null);
 }
-export const prWhere = (pr) => (pr.run ? "open it" : !pr.url ? "nothing to open" : shared("review.layout") ? "open it in PR review" : "open it in the browser");
+export const prWhere = (pr) => (pr.run ? "open it" : !M.webUrl(pr.url) ? "nothing to open" : shared("review.layout") ? "open it in PR review" : "open it in the browser");
 
 // Which of these folders have a space: its folder, or a terminal of it, is inside. Map(path -> space id).
 export function spaceMap(paths) {

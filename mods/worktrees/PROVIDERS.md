@@ -43,6 +43,14 @@ setShared("worktrees.prs.mymod", {
   filled in: app commands in order, 150 ms apart, so a command that shows a panel lands before one that talks
   to it. Without any `run`: when the PR review mod is installed (`review.layout` is set), the PR is
   handed to it through `pr.goto` (`{url}`, its PROVIDERS.md section 3); else `url` opens in the browser.
+- **`url` must be an `https://` address** without spaces. Anything else (`http:`, `file:`, a path, an app) is
+  dropped when the list is read: the mark is still drawn, and its click opens nothing.
+- **`{branch}` is someone else's text.** A branch is named by the pull request's author, and git allows `;`,
+  `$(…)`, backticks and quotes in the name; `{repo}` and `{url}` come from the same list. Never put a placeholder
+  into a shell line (`["sh", "-c", "git switch {branch}"]` runs whatever the name says). In an `argv` write it as
+  an argument of its own, after `--` where the program takes options: `["git", "switch", "--", "{branch}"]`.
+  Worktrees fills each string separately, so such an argument stays one argument whatever it holds, and it drops
+  control characters; it cannot make a shell line safe.
 - **"merged, can go"** in the branch card needs proof: the branch's PR is `merged` and the branch still is that
   PR's head (`headSha` equals the branch's commit, or no `headSha` was given), or git says the upstream branch is
   gone. Ancestry is never used, because a squash merge leaves the branch unmerged by ancestry.

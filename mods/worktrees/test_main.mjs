@@ -47,7 +47,7 @@ function reset(w) {
     run: (...a) => log.push(["run", ...a]), notify: () => {}, openOverlay: () => {}, closeOverlay: () => {},
     readTextFile: async () => null, nextCommand: () => never,
     exec: async (cmd, args, opts) => {
-      log.push(["exec", cmd, opts?.cwd ?? args.find((a) => a.endsWith(".py")) ?? ""]);
+      log.push(["exec", cmd, opts?.cwd ?? args.find((a) => a.endsWith(".py")) ?? "", args]);
       if (cmd === "find" && args[1] === `${HOME}/code`) return { code: 0, stderr: "", stdout: world.repos.map((p) => `${p}/.git\n`).join("") };
       if (cmd === "git" && args[0] === "show") return { code: 0, stderr: "", stdout: world.show ?? "" };
       if (cmd === "stat") return { code: 0, stderr: "", stdout: world.touched.map((p) => `${Math.floor(Date.now() / 1000)} ${p}/.git/logs/HEAD\n`).join("") };
@@ -79,6 +79,7 @@ const readAfterWatch = (n) => { const on = log.findIndex((l) => l[0] === "watch"
 
 reset({});
 const { default: Worktrees } = await import("./main.js");
+const Hub = await import("./hub.js");
 const start = async () => { const v = new Worktrees(); v.init({}, cx); await settle(); return v; };
 const remembered = () => ({ repos: JSON.stringify({ v: 1, at: 1, where: "", repos: [{ path: repo(1), name: "r1", rel: "r1", gitdir: `${repo(1)}/.git`, common: `${repo(1)}/.git`, main: null, kind: "repo" }] }) });
 
@@ -175,4 +176,15 @@ test("drag onto a terminal: a checkout's row is its folder, a commit's file the 
   drags.length = 0; view.details({}, cx);
   assert.deepEqual(drags, [[[`${repo(1)}/src/a.txt`]]]); // not the deleted file, not one outside the checkout, not one with a tab in its name
   assert.deepEqual(view.detail.data.files.map((f) => f.here), [false, false, false, false]); // editor links stay for commits of the checked-out branch
+});
+
+test("a PR mark's click hands an https address to the system and nothing else", async () => {
+  reset({});
+  for (const url of ["file:///Applications/Calculator.app", "/Applications/Calculator.app", "http://example.org/1", "https://example.org/a b"]) {
+    Hub.openPr({ url, run: null }, cx);
+    assert.equal(Hub.prWhere({ url, run: null }), "nothing to open");
+  }
+  assert.deepEqual(log, []);
+  Hub.openPr({ url: "https://example.org/pull/1", run: null }, cx);
+  assert.deepEqual(asked("exec").map((l) => [l[1], l[3]]), [["xdg-open", ["https://example.org/pull/1"]]]);
 });
