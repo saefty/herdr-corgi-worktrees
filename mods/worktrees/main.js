@@ -8,7 +8,7 @@
 // Optional, through shared state only (PROVIDERS.md): contexts from "goto.context", PR marks from providers,
 // rows in Go to; it publishes how many repos are not pushed.
 import { View, div } from "gpui-kit";
-import { h_flex, v_flex } from "gpui-base";
+import { h_flex, v_flex, ScrollHandle } from "gpui-base";
 import { theme, shared, setShared, exec, home, appHome, run, focused, layout, props, settings, spaces, panes, openOverlay, watchFolder, readTextFile, nextCommand, notify, checking } from "herdr";
 import { NAME } from "./name.js";
 import { key, prsNow, openPr, prWhere, spaceMap, openFolder } from "./hub.js";
@@ -70,7 +70,8 @@ export default class Worktrees extends View {
     this.famOpen = new Set(); // repos whose unpushed worktrees are all listed
     this.open = null;        // path of the row whose branch card is open
     this.card = null;        // {path, base, rows}
-    this.checked = 0; this.total = 0;
+    this.checked = 0; this.total = 0; this.listLen = 1;
+    this.scroll = ScrollHandle.new(); // where the list is scrolled to, kept by this copy (see the list in render)
     let cache = null, state = null;
     try { cache = JSON.parse(localStorage.getItem("repos") ?? "null"); } catch {}
     try { state = JSON.parse(localStorage.getItem("state") ?? "null"); } catch {}
@@ -121,6 +122,7 @@ export default class Worktrees extends View {
     cx.spawn(async (cx) => { await lookForEditors(); cx.notify(); });
     // Commands, for keys.json ("<mod>.<command>"): show:needs|all, expand:<repo>, older, more, family:<repo>,
     // open:<repo>, pr:<repo>, history:<repo>, refresh, refresh:all (ask git for every checkout), tick,
+    // scroll:top | end | <line> (the list, for keys),
     // editor (the checkout the focused pane is in, in its editor), editor:<path>[:<line>] (a folder or a file),
     // editor-menu[:<path>] (the ▾ menu for it).
     // <repo>: a checkout's path, its path below its root, or its name.
@@ -166,6 +168,7 @@ export default class Worktrees extends View {
     else if (name === "pr") { const r = hit(), pr = r && M.prFor(this.prsNow(), r.slug, this.info[r.path]?.branch); if (pr) openPr(pr, cx); }
     else if (name === "history") { const r = hit(); if (r) this.history(r.path, cx); }
     else if (name === "refresh") this.refresh(cx, arg === "all");
+    else if (name === "scroll") this.scroll.scroll_to_item(arg === "end" ? this.listLen - 1 : Math.max(0, Math.min(this.listLen - 1, Math.round(+arg) || 0))); // "top", "end" or a line of the list
     else if (name === "editor") this.editorAt(arg, cx);
     else if (name === "tick") cx.spawn((cx) => this.pass(cx, "tick", this.inUse())); // what the timer does every five minutes
   }
@@ -192,7 +195,8 @@ export default class Worktrees extends View {
     });
   }
 
-  setShow(k) { this.show = k; try { localStorage.setItem("show", k); } catch {} }
+  // The other list starts at its top.
+  setShow(k) { if (k !== this.show) this.scroll.scroll_to_item(0); this.show = k; try { localStorage.setItem("show", k); } catch {} }
 
   // The settings: <app home>/<mod>.config.json, and from Herdr's own settings.json where New worktree puts checkouts
   // ("worktrees": {"directory"}): that folder is a worktree root too. Both are read before every scan.
@@ -726,6 +730,7 @@ export default class Worktrees extends View {
       // Nothing found at all: say where it looked and where to change that.
       if (!this.repos.length && !this.scanning) body.splice(0, body.length, note(`No git checkouts under ${this.cfg.roots.map(tilde).join(", ")}. Set "roots" in ${tilde(appHome())}/${NAME}.config.json, then ↻.`));
     }
+    this.listLen = Math.max(1, body.length);
     const seg = h_flex().flex_none().p(2).gap(2).rounded(7).border(1).border_color(t.border).bg(t.surface)
       .children(SHOW.map(([k, label]) => div().id(`seg-${k}`).px(8).h(24).flex().items_center().rounded(5).text_size(11.5)
         .tooltip(k === "needs" ? "Checkouts with commits that are not pushed, or with changes." : "Every checkout under the roots, by folder.")
@@ -748,6 +753,9 @@ export default class Worktrees extends View {
             .on_click((e, cx) => this.refresh(cx, Boolean(e?.modifiers?.shift))).child(this.scanning || this.running ? "…" : "↻")))
         .child(h_flex().child(seg))
         .child(div().text_size(11).text_color(t.dim).child(state)))
-      .child(v_flex().flex_1().min_h(0).p(6).gap(1).overflow_y_scrollbar().children(body));
+      // The list has a name, and how far it is scrolled is kept in this copy's handle. Herdr knows an element without
+      // a name only by its place in the tree a render built, and what belongs to it (here: the scroll position) goes
+      // when that place shifts. Every list Herdr ships has a name or a handle; this one had neither.
+      .child(v_flex().id("wt-list").flex_1().min_h(0).p(6).gap(1).overflow_y_scrollbar().track_scroll(this.scroll).children(body));
   }
 }

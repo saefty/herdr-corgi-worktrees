@@ -12,20 +12,24 @@ import { tmpdir } from "node:os";
 const HERDR = ["theme", "shared", "setShared", "exec", "home", "appHome", "run", "focused", "layout", "props", "settings", "spaces", "panes",
   "openOverlay", "closeOverlay", "watchFolder", "readTextFile", "nextCommand", "notify", "window", "checking"];
 const BASE = ["h_flex", "v_flex", "v_virtual_list", "VirtualListScrollHandle", "Scrollbar", "InputState", "Input"];
+const scrolls = globalThis.SCROLLS = []; // every scroll_to_item of a ScrollHandle
 const stubs = {
   herdr: HERDR.map((n) => `export const ${n} = (...a) => globalThis.H.${n}(...a);`).join("\n"),
   "gpui-kit": "export class View {}\nexport const div = globalThis.EL;",
-  "gpui-base": BASE.map((n) => `export const ${n} = globalThis.EL;`).join("\n"),
+  "gpui-base": `${BASE.map((n) => `export const ${n} = globalThis.EL;`).join("\n")}\nexport const ScrollHandle = { new: () => ({ scroll_to_item: (i) => globalThis.SCROLLS.push(i) }) };`,
   "fs/promises": "export const exists = async (p) => globalThis.H.files.includes(p);",
 };
 registerHooks({
   resolve: (spec, context, next) => (spec in stubs ? { url: `stub:${spec}`, shortCircuit: true } : next(spec, context)),
   load: (url, context, next) => (url.startsWith("stub:") ? { format: "module", source: stubs[url.slice(5)], shortCircuit: true } : next(url, context)),
 });
-const drags = [], texts = [];
+let lastId = null;
+const drags = [], texts = [], lists = []; // lists: [id, handle] of every element that tracks a scroll handle
 const EL = globalThis.EL = new Proxy(function () {}, { apply: () => EL, get: (_t, k) => (k === "then" ? undefined
   : k === "when" ? (on, fn) => { if (on) fn(EL); return EL; }
   : k === "child" ? (c) => { if (typeof c === "string") texts.push(c); return EL; }
+  : k === "id" ? (name) => { lastId = name; return EL; }
+  : k === "track_scroll" ? (handle) => { lists.push([lastId, handle]); return EL; }
   : k === "drag_paths" ? (paths, ...more) => { drags.push([paths, ...more]); return EL; } : EL) });
 
 const HOME = "/h", repo = (n) => `${HOME}/code/r${n}`;
@@ -306,4 +310,19 @@ test("an editor that could not be started: the toast has editor.js' words", asyn
   panel.openEditor({ root: repo(8) }, cx); await settle();
   assert.deepEqual(asked("exec").map((l) => l[1]), ["open"]); // one process per click
   assert.deepEqual(asked("notify").map((l) => [l[1].level, l[1].body]), [["error", E.failedText("vscode", [])]]);
+});
+
+test("the list stays scrolled: it has a name and a handle of its own, in both views", async () => {
+  reset({ repos: Array.from({ length: 150 }, (_x, i) => repo(i + 1)), spaces: [] });
+  const panel = await start();
+  for (const show of ["needs", "all"]) {
+    panel.command(`show:${show}`, cx);
+    lists.length = 0; panel.render(cx);
+    assert.deepEqual(lists, [["wt-list", panel.scroll]]);
+  }
+  scrolls.length = 0; // "All" is drawn: 60 rows and "Show 60 more of 90"
+  panel.command("scroll:end", cx); panel.command("scroll:7", cx); panel.command("scroll:999", cx); panel.command("scroll:top", cx);
+  assert.deepEqual(scrolls, [60, 7, 60, 0]);
+  panel.command("scroll:end", cx); panel.command("show:needs", cx); panel.command("show:needs", cx); // the other list starts at its top
+  assert.deepEqual(scrolls.slice(4), [60, 0]);
 });
