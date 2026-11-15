@@ -23,3 +23,9 @@
   searched and its checkouts are marked "agent worktree", next to `worktreeRoots`.
 - Drag onto a terminal: a checkout's row gives its folder, a changed file in a commit's details gives that file
   in the checkout, if it is there.
+- Fixes from the acceptance review: a pull request mark opens only an `https://` address; `{branch}` in a
+  provider's `run` is treated as someone else's text; the helper gives no fingerprint for a split index or a
+  checked-out submodule and is not fooled by a file dated in the future; a worktree whose repo is not under the
+  roots is checked when it changes; a root whose name starts with a dot is searched; "All" draws 60 rows at a
+  time; the rows in Go to stay when one of two copies of the panel closes; an editor menu's entry acts only in
+  the copy that opened it; a dry run says that nothing was started; a short link says "Opening <Editor> …".

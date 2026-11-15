@@ -114,7 +114,7 @@ async function openIn(target, id = null) {
 }
 
 const keyOf = (target) => `${target.root}\n${target.file ?? ""}\n${target.line ?? ""}`;
-const isOpening = (target) => (opening.get(keyOf(target)) ?? 0) > Date.now();
+export const isOpening = (target) => (opening.get(keyOf(target)) ?? 0) > Date.now();
 // A click on a link: it says "Opening …" at once and for three seconds and takes no second click (a lock per
 // target, not for the whole mod); only a failure is said, as a toast.
 export function startOpen(target, cx, id = null) {
@@ -167,12 +167,12 @@ function mark(target, cx, short) {
   if (!ed) return null;
   const busy = isOpening(target), where = target.where ? ` ${target.where}` : "";
   const tip = target.file ? E.linkTip(ed.id, { file: target.file, line: target.line ?? null, where: target.where ?? "" }, extra) : `Open ${tilde(target.root)} in ${E.editorName(ed.id, extra)}${where}.`;
-  return { id: ed.id, busy, text: busy ? (short ? "…" : E.openingLabel(ed.id, extra)) : short ? E.shortLabel(ed.id, extra) : E.linkLabel(ed.id, extra), tip };
+  return { id: ed.id, busy, text: busy ? E.openingLabel(ed.id, extra) : short ? E.shortLabel(ed.id, extra) : E.linkLabel(ed.id, extra), tip };
 }
 
 // The link for a place: [] when there is nothing to open in. Link form: the editor's name and a ▾ with the menu.
 // Short form (a row): the monogram in a reserved width; a right click opens the menu. view.openEditor(target, cx)
-// is the click.
+// is the click. Both forms say "Opening <Editor> …" for the three seconds after it, as wide as that is.
 export function editorLink(view, t, key, target, cx, short = false) {
   const m = mark(target, cx, short);
   if (!m) return [];

@@ -16,7 +16,7 @@ import History from "./history.js";
 import { parse } from "./status.js";
 import * as M from "./model.js";
 import { middle } from "./graph.js";
-import { editorLink, editorFor, rootInfo, rootRead, forgetRoots, checkoutOf, startOpen, openEditorMenu, menuCommand, renderMenu, configure, lookForEditors, haveEditors, SHORT_W } from "./editor-view.js";
+import { editorLink, editorFor, rootInfo, rootRead, forgetRoots, checkoutOf, startOpen, isOpening, openEditorMenu, menuCommand, renderMenu, configure, lookForEditors, haveEditors, SHORT_W } from "./editor-view.js";
 
 const PARALLEL = 8;
 const RESCAN_MS = 30 * 60 * 1000;
@@ -582,8 +582,9 @@ export default class Worktrees extends View {
       div().id(`t-${path}-${i}`).flex_none().text_size(11.5).text_color(color).when(Boolean(strong), (e) => e.font_semibold()).tooltip(tip).child(text)));
     const name = div().flex_1().min_w(0).text_size(13).text_color(t.foreground).child(label);
     // "IJ ↗" / "VS ↗" in a reserved width, only on the row the pointer is on; a right click on the row: other editors.
-    const target = this.folderTarget(path), hover = this.hover === path;
-    const editor = haveEditors() ? h_flex().flex_none().w(SHORT_W).h(20).justify_end().children(hover ? editorLink(this, t, `row-${path}`, target, cx, true) : []) : null;
+    // After a click it says "Opening <Editor> …" for its three seconds, as wide as that is and wherever the pointer went.
+    const target = this.folderTarget(path), hover = this.hover === path, busy = isOpening(target);
+    const editor = haveEditors() ? h_flex().flex_none().when(!busy, (e) => e.w(SHORT_W)).h(20).justify_end().children(hover || busy ? editorLink(this, t, `row-${path}`, target, cx, true) : []) : null;
     // The row is also the folder itself: dragged onto a terminal, its path is typed there (a click stays a click).
     const drag = M.draggable(path);
     return v_flex().id(`r-${path}`).when(drag, (e) => e.drag_paths([path])).px(2).py(two ? 3 : 0).rounded(6).hover((st) => st.bg(t.hover))
@@ -614,9 +615,9 @@ export default class Worktrees extends View {
     const elsewhere = (r, i) => {
       if (rootInfo(r.worktree, cx).there) return editorLink(this, t, `wt-${path}-${i}`, { root: r.worktree, main: project, branch: r.name, where: `(the worktree with ${r.name})` }, cx, true);
       if (!rootInfo(project.path, cx).there) return [div().flex_none().text_color(t.dim).child("Folder is gone.")];
-      const ed = editorFor({ root: project.path }, cx);
-      return [div().flex_none().text_color(t.dim).child(ed ? "Worktree removed ·" : "Worktree removed"), ...(ed ? [div().id(`gone-${path}-${i}`).flex_none().text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
-        .tooltip(`${tilde(r.worktree)} is gone. Open ${tilde(project.path)} instead.`).on_click((_e, cx) => { cx.stop_propagation(); this.openEditor({ root: project.path }, cx); }).child(`Open ${project.name} ↗`)] : [])];
+      // the project's folder as a link like any other: it says "Opening …" after the click and has the ▾ menu
+      const link = editorLink(this, t, `gone-${path}-${i}`, { root: project.path, where: `instead (${tilde(r.worktree)} is gone)` }, cx);
+      return [div().flex_none().text_color(t.dim).child(link.length ? `Worktree removed · open ${project.name} in` : "Worktree removed"), ...link];
     };
     const box = v_flex().id(`card-${path}`).ml(28).mr(4).mb(4).mt(2).p(6).gap(3).rounded(6).border(1).border_color(t.border).bg(t.surface)
       .on_click((_e, cx) => cx.stop_propagation()); // the card is not the row's "open space" target

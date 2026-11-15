@@ -277,3 +277,21 @@ test("a dry run starts nothing and says so, with what it would have started", as
   assert.ok(note.body.startsWith("open ") && note.body.includes(repo(1)), note.body);
   assert.deepEqual(JSON.parse(store.get("opened")).length, 1); // and it is still noted in the mod's storage
 });
+
+test("after a click a link says Opening <Editor> …: the short form too, and the project of a removed worktree", async () => {
+  reset({ repos: [repo(7)], spaces: [], read: (p) => withEditor(p) ?? (p === `${repo(7)}/.git/HEAD` ? "ref: refs/heads/main\n" : null) });
+  const panel = await start();
+  await EV.lookForEditors(true);
+  const target = { root: repo(7) }, drawn = (draw) => { texts.length = 0; draw(); return [...texts]; };
+  const short = () => drawn(() => EV.editorLink(panel, {}, "k", target, cx, true));
+  panel.open = repo(7); // its branch card: one branch is checked out in a folder that is gone
+  panel.card = { path: repo(7), base: null, rows: [{ name: "feat/x", depth: 0, worktree: "/gone/wt", mainAhead: null, at: 0 }] };
+  const card = () => drawn(() => panel.cardView(panel.byPath.get(repo(7)), {}, cx));
+  short(); card(); await settle(); // the first draw reads the folders
+  assert.deepEqual(short(), ["VS ↗"]);
+  assert.ok(card().includes("Worktree removed · open r7 in") && !card().includes("Opening VS Code …"));
+  panel.openEditor(target, cx);
+  assert.deepEqual(short(), ["Opening VS Code …"]);
+  assert.equal(card().filter((x) => x === "Opening VS Code …").length, 2); // the card's own link and the removed worktree's
+  await settle();
+});
