@@ -2,6 +2,9 @@
 // configured roots and the agents' worktrees (model.js configOf): Not pushed, Changed this week, Older or untracked
 // only (folded). Local only: never fetches, never writes to a repo. A row's click: its space, or a new one there;
 // its ▸ opens the branch card (one `git for-each-ref` for that repo).
+// Starting a process is the expensive part (a quarter of a second each on some machines), so git is asked as rarely
+// as possible: probe.py reads what changed from files, one process for many checkouts, and `git status` runs only
+// for a checkout whose fingerprint differs from the one of its last git status (kept across app starts).
 // Optional, through shared state only (PROVIDERS.md): contexts from "goto.context", PR marks from providers,
 // rows in Go to; it publishes how many repos are not pushed.
 import { View, div } from "gpui-kit";
@@ -16,17 +19,21 @@ import { middle } from "./graph.js";
 
 const PARALLEL = 8;
 const RESCAN_MS = 30 * 60 * 1000;
-// ponytail: .git watches catch commits, checkouts, staging, pushes; plain edits in the work tree only show on this
-// timer (while the panel is shown), when the panel opens, or on ↻.
+// All checkouts are checked when the panel opens and on ↻. While it stays open, every STATUS_MS only the ones in
+// use: with a space or a terminal in them, or with files changed lately. A watch on each .git reports commits,
+// checkouts, staging and pushes right away.
 const STATUS_MS = 5 * 60 * 1000;
-const TICK_MS = 10 * 1000; // how often the panel looks whether it is shown (a layout lookup, no process)
+const TICK_MS = 10 * 1000;  // how often the panel looks whether it is shown (a layout lookup, no process)
+const WATCH_MS = 1500;      // .git changes are collected this long, then checked together
+const PROBES = 4;           // a full pass runs up to this many probes side by side, so the list fills in parts
+const PROBE_MIN = 40;       // … but not for fewer checkouts than this each
 const SHOW = [["needs", "Needs me"], ["all", "All"]];
 // Narrower than this (content px): no age, no context word, no group hints. The branch always stays.
 const COMPACT_PX = 300;
 const WEEK_ROWS = 8;   // "Changed this week" shows this many, then "Show n more"
 const FAMILY_ROWS = 3; // "Not pushed" shows this many checkouts of one repo, then "Show n more of <repo>"
 const CARD_ROWS = 30;  // ponytail: a branch card lists the base and the newest branches; the rest is one count
-const STAT_CHUNK = 600;
+const STAT_CHUNK = 600; // only without python3 (see ages)
 const GIT = ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch", "--show-stash", "-z"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -48,7 +55,9 @@ export default class Worktrees extends View {
     this.show = localStorage.getItem("show") === "all" ? "all" : "needs";
     this.info = {};          // path -> parsed status (+ local: commits on no remote), or {error}
     this.times = {};         // path -> {head, index, files, fetch} in ms
-    this.local = new Map();  // path -> {oid, n}: the never-pushed count, kept while HEAD stays
+    this.fp = {};            // path -> the probe's fingerprint when git status last ran there
+    this.local = new Map();  // path -> {key, n}: the never-pushed count, kept while HEAD and the remote refs stay
+    this.flagged = new Set(); // checkouts whose .git changed, waiting for the next check
     this.bases = new Map();  // common git dir -> the base branch its card last used
     this.watched = new Map(); // path -> the folder watched for it
     this.prs = M.prIndex(null); // from providers, see prsNow
@@ -57,32 +66,43 @@ export default class Worktrees extends View {
     this.open = null;        // path of the row whose branch card is open
     this.card = null;        // {path, base, rows}
     this.checked = 0; this.total = 0;
-    let cache = null;
+    let cache = null, state = null;
     try { cache = JSON.parse(localStorage.getItem("repos") ?? "null"); } catch {}
+    try { state = JSON.parse(localStorage.getItem("state") ?? "null"); } catch {}
     this.setRepos(cache?.v === 1 ? cache.repos ?? [] : []);
     this.scannedAt = cache?.v === 1 ? cache.at ?? 0 : 0;
+    // What was known when the app last ran: shown at once, and checked against the files before git is asked.
+    if (state?.v === 1) {
+      for (const [path, row] of Object.entries(state.rows ?? {})) {
+        if (!this.byPath.has(path)) continue;
+        this.info[path] = row.s; this.times[path] = row.t ?? {}; this.fp[path] = row.fp ?? null;
+        if (row.local) this.local.set(path, row.local);
+      }
+      this.fullAt = this.checkedAt = state.at ?? null;
+    }
     cx.spawn(async (cx) => {
       await this.loadConfig();
       // The remembered list serves for RESCAN_MS, unless the settings say to look elsewhere now.
       if (!this.repos.length || Date.now() - this.scannedAt > RESCAN_MS || cache?.where !== this.where()) await this.scan(cx);
       else this.watchAll(cx);
-      await this.statusAll(cx);
+      await this.pass(cx, "full");
     });
-    // In the background a rescan only checks repos it has not seen: unpushed commits change through .git (watched),
-    // and the changed-file counts are refreshed when the panel opens.
+    // In the background a rescan only checks checkouts it has not seen yet.
     cx.timer.every(RESCAN_MS, (cx) => cx.spawn(async (cx) => {
       await this.scan(cx);
-      await this.statusAll(cx, shownNow() ? null : this.repos.filter((r) => !this.info[r.path]).map((r) => r.path));
+      if (shownNow()) await this.pass(cx, "full");
+      else await this.pass(cx, "new", this.repos.filter((r) => !this.info[r.path]).map((r) => r.path));
       this.publish(true); // still counting: a reader can drop a number nobody has confirmed for a while
     }));
-    // While shown: a full pass every STATUS_MS. While hidden: nothing, but remember it (render is not called then),
-    // so that opening the panel re-checks.
+    // While shown: the checkouts in use every STATUS_MS. While hidden: nothing, but remember it (render is not
+    // called then), so that opening the panel checks all of them.
     cx.timer.every(TICK_MS, (cx) => {
       if (!shownNow()) this.away = true;
-      else if (this.checkedAt && Date.now() - this.checkedAt > STATUS_MS) cx.spawn((cx) => this.statusAll(cx));
+      else if (this.checkedAt && Date.now() - this.checkedAt > STATUS_MS) cx.spawn((cx) => this.pass(cx, "tick", this.inUse()));
     });
     // Commands, for keys.json ("<mod>.<command>"): show:needs|all, expand:<repo>, older, more, family:<repo>,
-    // open:<repo>, pr:<repo>, history:<repo>, refresh. <repo>: a checkout's path, its path below its root, or its name.
+    // open:<repo>, pr:<repo>, history:<repo>, refresh, refresh:all (ask git for every checkout), tick.
+    // <repo>: a checkout's path, its path below its root, or its name.
     cx.spawn(async (cx) => { for (;;) { this.command(String(await nextCommand()), cx); cx.notify(); } });
   }
 
@@ -119,7 +139,8 @@ export default class Worktrees extends View {
     else if (name === "open") { const r = hit(); if (r) this.openSpace(r, cx); }
     else if (name === "pr") { const r = hit(), pr = r && M.prFor(this.prsNow(), r.slug, this.info[r.path]?.branch); if (pr) openPr(pr, cx); }
     else if (name === "history") { const r = hit(); if (r) this.history(r.path); }
-    else if (name === "refresh") this.refresh(cx);
+    else if (name === "refresh") this.refresh(cx, arg === "all");
+    else if (name === "tick") cx.spawn((cx) => this.pass(cx, "tick", this.inUse())); // what the timer does every five minutes
   }
 
   setShow(k) { this.show = k; try { localStorage.setItem("show", k); } catch {} }
@@ -157,7 +178,7 @@ export default class Worktrees extends View {
       }
     }));
     this.setRepos(repos.sort((a, b) => a.path.localeCompare(b.path)));
-    for (const k of Object.keys(this.info)) if (!this.byPath.has(k)) { delete this.info[k]; delete this.times[k]; this.local.delete(k); }
+    for (const k of Object.keys(this.info)) if (!this.byPath.has(k)) { delete this.info[k]; delete this.times[k]; delete this.fp[k]; this.local.delete(k); }
     this.scannedAt = Date.now();
     try { localStorage.setItem("repos", JSON.stringify({ v: 1, at: this.scannedAt, where: this.where(), repos: this.repos })); } catch {}
     this.scanning = false;
@@ -165,9 +186,22 @@ export default class Worktrees extends View {
     cx.notify();
   }
 
-  // One `git status` for a repo; a second process only for a branch that was never pushed (how many commits are on
-  // no remote), asked once per HEAD. Returns how many processes ran.
-  async status(path, again = false) {
+  // What changed, from files alone (probe.py): one process for all these checkouts. Map(path -> its line).
+  // Empty when python3 or the script is missing: then git is asked for every checkout, as if all had changed.
+  async probe(paths) {
+    const out = new Map();
+    if (this.noProbe || !paths.length) return out;
+    const args = paths.flatMap((p) => { const r = this.byPath.get(p); return r ? [r.path, r.gitdir, r.common] : []; });
+    const r = await exec("python3", [`${appHome()}/mods/${NAME}/probe.py`, ...args], { timeout: 120000 }).catch(() => null);
+    for (const line of (r?.stdout ?? "").split("\n")) { try { const row = JSON.parse(line); out.set(row.path, row); } catch {} }
+    if (!out.size) { this.noProbe = true; console.log(`${NAME}: probe.py did not answer (python3 missing?): asking git for every checkout`); }
+    return out;
+  }
+
+  // One `git status` for a checkout; a second process only for a branch that was never pushed and whose commit is
+  // on no remote ref (how many commits are on no remote), asked once per HEAD and state of the remote refs.
+  // seen: the probe's line for it, if any. Returns how many processes ran.
+  async status(path, seen = null, again = false) {
     const repo = this.byPath.get(path);
     let s, runs = 1;
     try {
@@ -182,21 +216,22 @@ export default class Worktrees extends View {
     }
     if (repo?.main && s.stash) s.stash = 0; // the stash belongs to the repo: shown there, not again at each of its worktrees
     if (!s.error && !s.upstream && !s.detached && repo?.hasRemote && s.oid && s.oid !== "(initial)") {
-      const had = this.local.get(path);
-      if (had?.oid === s.oid) s.local = had.n;
+      const k = `${s.oid}|${seen?.remotes ?? ""}`, had = this.local.get(path);
+      if (seen?.onRemote && seen.oid === s.oid) s.local = 0; // its commit is a remote branch's: nothing only here
+      else if (had?.key === k) s.local = had.n;
       else {
         runs++;
-        const r = await exec("git", ["rev-list", "--count", "HEAD", "--not", "--remotes"], { cwd: path, timeout: 20000 }).catch(() => null);
+        const r = await exec("git", ["rev-list", "--count", "HEAD", "--not", "--remotes"], { cwd: path, timeout: 30000 }).catch(() => null);
         s.local = r?.code === 0 ? +r.stdout.trim() || 0 : 0;
-        this.local.set(path, { oid: s.oid, n: s.local });
+        if (r?.code === 0) this.local.set(path, { key: k, n: s.local });
       }
     }
     this.info[path] = s;
+    this.fp[path] = seen?.fp ?? null; // what the files looked like just before: the same next time means no git
     return runs;
   }
 
-  // File times for these repos, one `stat` for all of them: HEAD's log (last commit, checkout or pull), the index,
-  // the changed tracked files git status named, and the last fetch.
+  // File times without the probe (no python3): one `stat` for all these checkouts.
   async ages(paths) {
     const want = new Map(); // file -> [repo path, kind]
     for (const p of paths) {
@@ -229,29 +264,73 @@ export default class Worktrees extends View {
     return runs;
   }
 
-  // Every checkout (or just `only`): status, then ages once.
-  async statusAll(cx, only = null) {
-    if (this.running) return;
+  // The checkouts in use: with a space or a terminal in them, or with tracked changes or commits from the last day.
+  inUse() {
+    const now = Date.now(), open = spaceMap(new Set(this.repos.map((r) => r.path)));
+    return this.repos.filter((r) => open.has(r.path) || now - (M.touched(this.info[r.path], this.times[r.path]).at ?? 0) < M.DAY).map((r) => r.path);
+  }
+
+  // Check checkouts. kind: "full" (all: panel opened, ↻), "tick" (the ones in use), "watch" (the ones whose .git
+  // changed), "new" (not seen before). First the probe says which ones changed; git is asked only for those
+  // (force: for every one). Rows update as each part comes in.
+  async pass(cx, kind, only = null, force = false) {
+    if (this.running) { // one pass at a time: a full one asked for meanwhile runs right after, .git changes stay flagged
+      if (kind === "full") { this.fullWanted = true; this.forceWanted = this.forceWanted || force; }
+      return;
+    }
     const paths = only ?? this.repos.map((r) => r.path);
-    if (only && !paths.length) return;
+    if (!paths.length) return;
     this.running = true; this.checked = 0; this.total = paths.length;
     const started = Date.now();
-    let runs = 0;
+    let runs = 0, asked = 0;
     try {
       cx.notify();
-      const queue = [...paths];
-      await Promise.all(Array.from({ length: PARALLEL }, async () => {
-        for (let p; (p = queue.shift());) { const n = await this.status(p); runs += n; this.checked++; }
+      const todo = [], seen = new Map();
+      const parts = Math.max(1, Math.min(PROBES, Math.floor(paths.length / PROBE_MIN)));
+      // Up to PARALLEL git processes at a time work through `todo`, starting as soon as the first part names changes.
+      let active = 0;
+      const workers = [];
+      const git = async () => { for (let p; (p = todo.shift());) { const n = await this.status(p, seen.get(p)); runs += n; asked++; this.checked++; cx.notify(); } };
+      const pump = () => { while (active < PARALLEL && todo.length) { active++; workers.push(git().finally(() => { active--; })); } };
+      await Promise.all(Array.from({ length: parts }, async (_x, k) => {
+        const chunk = paths.filter((_p, i) => i % parts === k);
+        if (!this.noProbe) runs++;
+        const lines = await this.probe(chunk);
+        for (const p of chunk) {
+          const row = lines.get(p), s = this.info[p];
+          if (row) { seen.set(p, row); this.times[p] = row.t ?? {}; }
+          if (!force && row?.fp && row.fp === this.fp[p] && s && !s.error) this.checked++; // as it was: git would say the same
+          else todo.push(p);
+        }
+        cx.notify();
+        pump();
       }));
-      for (const p of paths) if (!this.info[p]) runs += await this.status(p, true); // the ones git did not answer for, one at a time
-      runs += await this.ages(paths);
+      pump();
+      await Promise.all(workers);
+      for (const p of paths) if (!this.info[p]) { runs += await this.status(p, seen.get(p), true); asked++; } // the ones git did not answer for, one at a time
+      if (this.noProbe) runs += await this.ages(paths);
     } finally { this.running = false; } // whatever fails, the next pass may start
     this.checkedAt = Date.now();
-    this.pass = { repos: paths.length, runs, ms: Date.now() - started, at: this.checkedAt };
-    try { localStorage.setItem("pass", JSON.stringify(this.pass)); } catch {}
+    if (kind === "full") this.fullAt = this.sessionFull = this.checkedAt;
+    this.passes = { ...this.passes, [kind]: { checkouts: paths.length, starts: runs, git: asked, ms: Date.now() - started, at: this.checkedAt } };
+    try { localStorage.setItem("pass", JSON.stringify(this.passes)); } catch {}
+    this.save();
     this.publish();
-    if (this.open) this.loadCard(this.open, cx);
+    if (this.open && paths.includes(this.open)) this.loadCard(this.open, cx);
     cx.notify();
+    // What came up meanwhile: a full pass someone asked for, or .git changes.
+    if (this.fullWanted) { const f = Boolean(this.forceWanted); this.fullWanted = this.forceWanted = false; await this.pass(cx, "full", null, f); }
+    else if (this.flagged.size) await this.flush(cx);
+  }
+
+  // Keep what is known, for the next app start: the list shows it at once, and git is asked only where files changed.
+  save() {
+    const rows = {};
+    for (const r of this.repos) {
+      const s = this.info[r.path];
+      if (s && !s.error) rows[r.path] = { s, t: this.times[r.path] ?? {}, fp: this.fp[r.path] ?? null, local: this.local.get(r.path) ?? null };
+    }
+    try { localStorage.setItem("state", JSON.stringify({ v: 1, at: this.fullAt ?? null, rows })); } catch {}
   }
 
   // What other mods may read. shared "<mod>.count": how many repos have commits only here, {total, contexts,
@@ -259,7 +338,7 @@ export default class Worktrees extends View {
   // session, and a number from an earlier session would be a guess. With Go to installed: the checkouts that need
   // a look as its rows, those of the shown context only.
   publish(beat = false) {
-    if (!this.checkedAt) return; // not before the first full pass: the number would count up
+    if (!this.sessionFull) return; // not before this session's first full pass: until then it is yesterday's number
     const hook = this.contexts();
     const n = M.counts(this.repos, this.info), { at: _at, ...old } = shared(key("count")) ?? {};
     if (beat || !this.beaten || JSON.stringify(n) !== JSON.stringify(old)) { this.beaten = true; setShared(key("count"), { ...n, at: Date.now() }); }
@@ -290,30 +369,31 @@ export default class Worktrees extends View {
     }
   }
 
-  // A watched git folder changed: check what the changed paths belong to. Files under .git/worktrees/<name>/ are
-  // that worktree's own (index, HEAD, log); everything else is the repo's. When remote refs moved (push, fetch),
-  // every worktree of the repo is ahead or behind against them too.
+  // A watched git folder changed: note which checkouts the changed paths belong to, and check them together a
+  // moment later. Files under .git/worktrees/<name>/ are that worktree's own (index, HEAD, log); everything else is
+  // the repo's. When remote refs moved (push, fetch), every worktree of the repo is ahead or behind against them too.
   async touch(path, dir, changed, cx) {
     const wt = (p) => /\/\.git\/worktrees\/([^/]+)/.exec(p)?.[1] ?? null;
     const names = new Set(changed.map(wt).filter(Boolean));
     const own = !changed.length || changed.some((p) => !wt(p));
     const remote = changed.some((p) => p === dir || p.includes("/refs/remotes/") || p.endsWith("/packed-refs") || p.endsWith("/FETCH_HEAD"));
-    const targets = [...(own ? [path] : []), ...this.repos.filter((r) => r.main === path && (remote || names.has(r.gitdir.slice(r.gitdir.lastIndexOf("/") + 1)))).map((r) => r.path)];
-    const moved = [];
-    for (const p of targets) {
-      const before = JSON.stringify(this.info[p]);
-      this.local.delete(p);
-      await this.status(p);
-      if (JSON.stringify(this.info[p]) !== before) moved.push(p); // unchanged: e.g. another tool's git status rewrote the index
-    }
-    if (!moved.length) return;
-    await this.ages(moved);
-    this.publish();
-    if (this.open && (moved.includes(this.open) || this.byPath.get(this.open)?.main === path)) this.loadCard(this.open, cx);
+    if (own) this.flagged.add(path);
+    for (const r of this.repos) if (r.main === path && (remote || names.has(r.gitdir.slice(r.gitdir.lastIndexOf("/") + 1)))) this.flagged.add(r.path);
+    if (this.flushing) return;
+    this.flushing = true;
+    cx.timer.after(WATCH_MS, (cx) => cx.spawn(async (cx) => { this.flushing = false; await this.flush(cx); }));
   }
 
-  refresh(cx) {
-    cx.spawn(async (cx) => { await this.scan(cx); this.local.clear(); await this.statusAll(cx); });
+  async flush(cx) {
+    if (this.running || !this.flagged.size) return; // a running pass takes them when it ends
+    const paths = [...this.flagged].filter((p) => this.byPath.has(p));
+    this.flagged.clear();
+    await this.pass(cx, "watch", paths);
+  }
+
+  // ↻: look for checkouts again and check all of them. force: ask git for every one, whatever the files say.
+  refresh(cx, force = false) {
+    cx.spawn(async (cx) => { await this.scan(cx); if (force) this.local.clear(); await this.pass(cx, "full", null, force); });
   }
 
   // Its space, or a new one there.
@@ -473,7 +553,7 @@ export default class Worktrees extends View {
     // notifying during render throws.
     if (shown && this.away) {
       this.away = false;
-      if (this.checkedAt && Date.now() - this.checkedAt > 60000) cx.timer.after(0, (cx) => cx.spawn((cx) => this.statusAll(cx)));
+      if (this.fullAt && Date.now() - this.fullAt > 60000) cx.timer.after(0, (cx) => cx.spawn((cx) => this.pass(cx, "full")));
     }
     this.hook = this.contexts();
     this.prsNow();
@@ -484,9 +564,7 @@ export default class Worktrees extends View {
     let g = null;
     if (shown) { // hidden: nothing below the header is worked out
       this.spaceOf = spaceMap(new Set(this.repos.map((r) => r.path)));
-      // During the very first pass ages are still missing (they come last): everything counts as not checked yet,
-      // rather than listed in a group it will leave a moment later.
-      g = M.groups(mine, this.checkedAt ? this.info : {}, this.times, Date.now(), days * M.DAY);
+      g = M.groups(mine, this.info, this.times, Date.now(), days * M.DAY);
       const head = (id, text, hint) => h_flex().id(id).px(8).pt(10).pb(2).gap(8).items_center().justify_between().text_size(11)
         .child(div().flex_none().font_semibold().text_color(t.muted).child(text))
         .when(!this.compact && Boolean(hint), (e) => e.child(div().min_w(0).truncate().text_color(t.dim).child(hint)));
@@ -509,7 +587,7 @@ export default class Worktrees extends View {
           if (rows.length > FAMILY_ROWS) body.push(more(`fam-${key}`, all ? "Show fewer" : `Show ${rows.length - FAMILY_ROWS} more of ${rows[0].repo.name}`,
             () => { if (all) this.famOpen.delete(key); else this.famOpen.add(key); }));
         }
-        if (!g.unpushed.length) body.push(note(g.pending.length ? "Checking…" : "Every commit is on a remote."));
+        if (!g.unpushed.length) body.push(note(g.pending.length ? `Checking… ${plural(g.pending.length, "checkout")} to go.` : "Every commit is on a remote."));
         body.push(head("h-week", `CHANGED ${M.weekWords(days).toUpperCase()} (${g.week.length})`, `tracked files, last ${days} days`));
         const week = this.moreWeek ? g.week : g.week.slice(0, WEEK_ROWS);
         body.push(...week.map(two));
@@ -531,18 +609,20 @@ export default class Worktrees extends View {
         .tooltip(k === "needs" ? "Checkouts with commits that are not pushed, or with changes." : "Every checkout under the roots, by folder.")
         .bg(this.show === k ? t.selected : t.surface).text_color(this.show === k ? t.foreground : t.muted)
         .on_click((_e, cx) => { this.setShow(k); cx.notify(); }).child(k === "all" ? `All ${mine.length}` : label)));
-    const state = this.scanning ? "looking for repos …"
-      : this.running ? `checking ${this.checked}/${this.total} …`
-      : this.checkedAt ? (this.prShown && this.prs.at ? `git as of ${hhmm(this.checkedAt)} · PRs as of ${stamp(this.prs.at)}` : `as of ${hhmm(this.checkedAt)} · local, no fetch`) : "";
-    const pass = this.pass ? ` Last pass: ${plural(this.pass.repos, "repo")}, ${this.pass.runs} ${this.pass.runs === 1 ? "process" : "processes"}, ${(this.pass.ms / 1000).toFixed(1)} s.` : "";
+    // "git as of": the last check of any kind; "(all 13:05)" when the last check of every checkout is older.
+    const asOf = this.checkedAt ? `${hhmm(this.checkedAt)}${this.fullAt && this.checkedAt - this.fullAt > 60000 ? ` (all ${stamp(this.fullAt)})` : ""}` : "";
+    const state = [this.scanning ? "looking for repos …" : this.running ? `checking ${this.checked}/${this.total} …` : "",
+      asOf ? (this.prShown && this.prs.at ? `git as of ${asOf} · PRs as of ${stamp(this.prs.at)}` : `as of ${asOf} · local, no fetch`) : "",
+      this.noProbe ? "no python3: slower checks" : ""].filter(Boolean).join(" · ");
+    const last = this.passes?.full, pass = last ? ` Last check of all: ${plural(last.checkouts, "checkout")}, ${last.starts} ${last.starts === 1 ? "process" : "processes"} (git asked for ${last.git}), ${(last.ms / 1000).toFixed(1)} s.` : "";
     return v_flex().id("root").on_size_change((size, cx) => { this.width = size.width; cx.notify(); }).size_full().min_h(0).bg(t.background).rounded(10).border(1).border_color(t.border).text_size(13)
       .child(v_flex().p(12).gap(8).border_b(1).border_color(t.border)
         .child(h_flex().gap(8).items_start().justify_between()
           .child(div().id("count").flex_1().min_w(0).tooltip(`Repos with commits only on this machine · checkouts with tracked changes from the last ${days} days · everything else that is not clean.`)
-            .text_size(13).font_semibold().text_color(t.foreground).child(!this.repos.length ? (this.scanning ? "Looking for repos…" : "No repos yet") : g && !g.pending.length ? M.sentence(g, days) : "Checking repos…"))
+            .text_size(13).font_semibold().text_color(t.foreground).child(!this.repos.length ? (this.scanning ? "Looking for repos…" : "No repos yet") : g && (!g.pending.length || g.pending.length < mine.length) ? M.sentence(g, days) : "Checking repos…"))
           .child(div().id("refresh").flex_none().size(24).flex().items_center().justify_center().rounded(5).text_size(12).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
-            .tooltip(`Rescan repos and re-check git status. Local only: nothing is fetched.${pass}`).accessibility_label("Refresh repos")
-            .on_click((_e, cx) => this.refresh(cx)).child(this.scanning || this.running ? "…" : "↻")))
+            .tooltip(`Look for checkouts again and check all of them. Shift-click: ask git for every one, whatever the files say. Local only: nothing is fetched.${pass}`).accessibility_label("Refresh repos")
+            .on_click((e, cx) => this.refresh(cx, Boolean(e?.modifiers?.shift))).child(this.scanning || this.running ? "…" : "↻")))
         .child(h_flex().child(seg))
         .child(div().text_size(11).text_color(t.dim).child(state)))
       .child(v_flex().flex_1().min_h(0).p(6).gap(1).overflow_y_scrollbar().children(body));

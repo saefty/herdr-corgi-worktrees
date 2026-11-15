@@ -93,7 +93,9 @@ the last copy of Worktrees closes, it sets `goto.items.worktrees` to `null`.
 
 | Command | Does |
 |---|---|
-| `refresh` | scan for checkouts again and re-check all of them (the ↻ button) |
+| `refresh` | look for checkouts again and check all of them (the ↻ button) |
+| `refresh:all` | the same, asking git for every checkout whatever the files say (Shift-↻) |
+| `tick` | check the checkouts in use, as the panel does every five minutes |
 | `show:needs`, `show:all` | the "Needs me" and "All" lists |
 | `expand:<repo>` | open or close a row's branch card |
 | `open:<repo>` | a row's click: its space, or a new one there |
@@ -152,7 +154,9 @@ All keys optional; the values below are the defaults.
 
 ## 6. Programs
 
-- Required: `git`, and the standard tools `find` and `stat` (BSD or GNU).
+- Required: `git` and `find`.
+- Optional: `python3` for `probe.py` (standard library only), which tells from files which checkouts changed so
+  that git is started only for those. Without it: one `git status` per checkout per check, and `stat` (BSD or GNU).
 - The bars in the branch card need git 2.41 or newer (`for-each-ref %(ahead-behind:…)`). With an older git the
   card lists the branches without bars.
 - "Open diff ↗" in the history view uses git's pager, `less`.

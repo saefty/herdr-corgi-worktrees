@@ -23,7 +23,7 @@ def patterns(old, new):
         (rf"\bherdr-{q}-demo\b", f"herdr-{new}-demo"),                        # the demo core's socket folder
         (rf"\b{q}-(demo|api)\b", rf"{new}-\1"),                               # the demo mod, corgi.json provides
         (rf"\b{q}\.(api|count|providers|prs|demo|config\.json)\b", rf"{new}.\1"),  # shared keys, the settings file
-        (rf"\b{q}\.(\$1|h-|refresh|show|expand|open|pr|history|older|more|family|<command>)", rf"{new}.\1"),  # commands
+        (rf"\b{q}\.(\$1|h-|refresh|tick|show|expand|open|pr|history|older|more|family|<command>)", rf"{new}.\1"),  # commands
         (rf"data/{q}/", f"data/{new}/"),                                      # the mod's stored state
         (rf'"{q}"', f'"{new}"'),                                              # JSON and JS string literals
         (rf"`{q}`", f"`{new}`"),                                              # the name in prose

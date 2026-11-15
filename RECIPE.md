@@ -29,13 +29,23 @@ branch stays.
 - Scan: one `find` per root (`-maxdepth depth`, hidden and pruned folders skipped, stops at each `.git`), every
   30 minutes and on ↻. Per checkout two small files are read: `.git` when it is a file (a worktree: its git
   folder, and the repo it belongs to) and the config (is there a remote, origin's URL, owner/name on github.com).
-- A pass: `git --no-optional-locks -c core.fsmonitor=false status --porcelain=v2 --branch --show-stash -z` per
-  checkout, 8 at a time. For a branch without upstream in a repo that has a remote, once per HEAD:
-  `git rev-list --count HEAD --not --remotes`. Then one `stat` for all file times: `logs/HEAD` and `HEAD` (last
-  commit), the index, `FETCH_HEAD`, and the first 12 changed tracked files of each checkout.
-- When a pass runs: at start, on ↻, every 5 minutes while the panel is on screen, and when it comes back on
-  screen after more than a minute. In the background nothing passes; a watch on each repo's `.git` re-checks that
-  repo (and the worktrees its changed paths belong to) when it changes.
+- A check, in two steps, because a process start is the expensive part. First `python3 probe.py <path> <gitdir>
+  <common> …`, one process for many checkouts (up to 4 side by side for 160 and more, so the list fills in parts).
+  It reads HEAD, the refs and packed-refs, the config (upstream), the stash log, parses the index and `lstat`s the
+  tracked files, their folders and the folders right below those. Per checkout it prints a JSON line: branch,
+  commit, upstream commit, whether the commit is a remote branch's, stash count, the times (`logs/HEAD`, index,
+  newest changed tracked file, `FETCH_HEAD`) and a fingerprint of all of it. Second, only for checkouts whose
+  fingerprint differs from the one stored with their last git status (or that have none, or with Shift-↻ for all):
+  `git --no-optional-locks -c core.fsmonitor=false status --porcelain=v2 --branch --show-stash -z`, 8 at a time.
+  For a branch without upstream whose commit is on no remote ref: `git rev-list --count HEAD --not --remotes`,
+  once per HEAD and state of the remote refs. Without python3: git for every checkout and one `stat` for the times.
+- What is known (status, times, fingerprint per checkout) is kept in `localStorage` and shown at once on the next
+  start; rows update as their answers come in, and the header says "checking 8/21 …" meanwhile.
+- When: all checkouts at start, on ↻ and when the panel comes back on screen after more than a minute. Every 5
+  minutes while it is on screen only the checkouts in use: a space's folder or a terminal inside, or touched in the
+  last day. A watch on each repo's `.git` flags that checkout (and the worktrees its changed paths belong to);
+  flags are collected for 1.5 s and checked together. One check runs at a time. The header says "git as of 13:40
+  (all 13:05)" when the last check of everything is older.
 - Groups: not pushed = ahead of upstream, or never pushed with commits on no remote. This week = tracked changes
   whose newest changed file is at most `weekDays` old (the index time only when no changed file is left). Older =
   the rest that is not clean, with the reason. A repo without any remote is "no remote", not "not pushed". A
@@ -91,16 +101,22 @@ branch stays.
 - Keys (the mod is `focusable`): up and down move the selection (and the open details with it), Enter picks, Esc
   closes the details, then clears the filter, then the selection.
 
-**Built from:** `mods/worktrees/main.js` (the panel, the scan, the passes, the watches), `history.js` (the history
+**Built from:** `mods/worktrees/main.js` (the panel, the scan, the checks, the watches), `probe.py` (which
+checkouts changed, from files; standard library only), `history.js` (the history
 view), `hub.js` (what both share: PR providers, running a click's commands, spaces), `model.js` (pure: settings,
 git folders, contexts, groups, ages, PR index, the branch card, what Go to gets), `graph.js` (pure: the log parser,
 what to show, folds, lanes, colors, name shortening), `status.js` (pure: the porcelain v2 parser), `name.js` (the
 mod's name in one place), `mod.json` (`place: none`, `focusable`, and an overlay so `mod.open` shows the panel as a
-window). It uses `exec` for `find`, `git` and `stat`, `readTextFile` for `.git` files,
+window). It uses `exec` for `find`, `python3`, `git` and (without python3) `stat`, `readTextFile` for `.git` files,
 `watchFolder`, `spaces() panes() layout()`, `nextCommand()`, and `localStorage` for the list of checkouts and the
 last pass. Settings: `worktrees.config.json` in the app home.
 
 **Watch out:**
+- Measure what a process start costs before choosing a design: here it was 0.25 s for any program, so 300
+  checkouts times one `git status` took 90 s at 5 s of CPU, and bundling them into one `sh -c` changed nothing.
+  The fix is fewer processes, not fewer `exec` calls.
+- The probe must never answer wrongly: whatever it cannot read (reftable, an index version it does not know, a
+  truncated file) gives no fingerprint, and git is asked.
 - `cx.notify()` during `render` throws, and a `cx.spawn` started in `render` runs at once. Start a pass from
   `render` through `cx.timer.after(0, …)`.
 - `render` is not called while the block is hidden. A 10 s timer notes "hidden", and the next render re-checks.
@@ -126,7 +142,8 @@ last pass. Settings: `worktrees.config.json` in the app home.
 **Done when:** `herdr-app check mods/worktrees` passes, `node --test mods/worktrees/test_model.mjs
 mods/worktrees/test_graph.mjs` passes, "History ↗" on `atlas-platform` in the demo shows main as the left lane
 with six branches beside it and folds like "· 9 commits ·", and
-in the demo the panel says "4 not pushed · 5 changed this week · 5 older", a commit in a repo changes the sentence
+`python3 mods/worktrees/test_probe.py` passes, in the demo the panel says "4 not pushed · 5 changed this week · 5
+older", ↻ with nothing changed starts one process (the ↻ tooltip says so), a commit in a repo changes the sentence
 without ↻, and `worktrees.expand:orbit-api` shows the
 stack `feat/login-flow` → `feat/login-tokens` and "merged, can go" at `fix/retry-old` and `chore/deps`.
 

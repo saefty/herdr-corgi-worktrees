@@ -77,8 +77,12 @@ never write to a repo.
   request mark to the pull request. Arrow keys move, Enter opens, Esc closes.
 - The history lists the newest 400 commits at first ("Load more" doubles it), from one `git log`.
 - "All" lists every checkout by folder, clean ones included.
-- Cheap by design: one `git status` per checkout in a pass, one `stat` for all file times, a watch on each
-  `.git` so commits and pushes show without a pass. Full passes run only while the panel is shown.
+- Cheap by design. Starting a process is what costs time (a quarter of a second each on some machines), so git
+  is asked as rarely as possible: one small helper reads from files which checkouts changed since their last
+  `git status`, one process for all of them, and git runs only for those. What was known is kept across app
+  starts, so the list is there at once. All checkouts are checked when the panel opens and on ↻; while it stays
+  open, only the ones in use (a space or a terminal in them, or changes from the last day) every five minutes; a
+  watch on each `.git` reports commits and pushes right away.
 - Other mods can add pull request marks, split the list by context (work and personal, say), read the number of
   repos that are not pushed for a button, and find the listed checkouts in Go to. Without any of them the panel
   works on its own.
@@ -97,7 +101,8 @@ Worktrees, [Go to](https://github.com/saefty/herdr-corgi-goto) and [PR review](h
 ## What's in here
 
 - `mods/worktrees/`: the mod. `main.js` is the panel and `history.js` the history view; `model.js`, `status.js`
-  and `graph.js` (lanes, folds) are the logic without any UI, each with its tests.
+  and `graph.js` (lanes, folds) are the logic without any UI, each with its tests. `probe.py` is the helper
+  that reads which checkouts changed.
 - `RECIPE.md`: the brief to build it from scratch.
 - `demo/`: an invented setup for the screenshots.
 
@@ -109,7 +114,8 @@ A mod can't install programs. Everything the panel runs is on a developer machin
 |---|---|---|---|
 | `git` | everything: status, branches, the history pane | `brew install git` (or Xcode's) | `sudo apt install git` |
 | `git` 2.41 or newer (optional) | the bars in the branch card (ahead of and behind main); an older git lists the branches without them | `brew upgrade git` | your distribution's newer package |
-| `find`, `stat` | finding checkouts, file times for "this week" | part of macOS | part of coreutils and findutils |
+| `find` | finding checkouts | part of macOS | part of findutils |
+| `python3` (optional, standard library only) | `probe.py`, the helper that tells from files which checkouts changed. Without it every check starts one `git status` per checkout (and one `stat`): the same list, but about a quarter of a second per checkout on machines where starting a process is slow | part of Xcode's tools, or `brew install python` | `sudo apt install python3` |
 | `less` (optional) | "Open diff ↗" in the history view: git's pager keeps the pane open; without it the pane closes at once | part of macOS | `sudo apt install less` |
 
 It needs no network, no `gh` and no login. Pull request marks come from other mods, not from a program here.
@@ -182,10 +188,14 @@ one. `corgi diff worktrees` shows what you changed.
 - "Not pushed" looks at the branch each checkout has checked out. Other branches with local commits show in the
   branch card.
 - The count for a bar is live only after the panel was shown once since the app started.
+- A checkout nobody uses is checked when the panel opens and on ↻, not in between: the header says "as of 13:40
+  (all 13:05)" then.
+- The helper does not see one thing: a new untracked file two or more folders below any tracked folder, inside a
+  folder that existed before and held only ignored files. Shift-click on ↻ asks git for every checkout.
 
 ## Tests
 
-`node --test mods/worktrees/test_model.mjs mods/worktrees/test_graph.mjs`
+`node --test mods/worktrees/test_model.mjs mods/worktrees/test_graph.mjs` and `python3 mods/worktrees/test_probe.py`
 
 ## For mod authors
 
