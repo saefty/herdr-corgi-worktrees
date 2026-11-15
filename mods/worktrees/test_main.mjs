@@ -1,10 +1,13 @@
 // Run: node --test test_main.mjs   (invented data only)
 // main.js itself, with stand-ins for Herdr: "herdr" answers from the object `H` below and notes what was asked,
 // and every element is one object that takes any call (it notes what was made draggable). Nothing here starts a
-// process or reads a file.
+// process or reads a file, but for one test that runs the real `find` over a throwaway folder.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerHooks } from "node:module";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const HERDR = ["theme", "shared", "setShared", "exec", "home", "appHome", "run", "focused", "layout", "props", "settings", "spaces", "panes",
   "openOverlay", "closeOverlay", "watchFolder", "readTextFile", "nextCommand", "notify", "window", "checking"];
@@ -48,6 +51,7 @@ function reset(w) {
     readTextFile: async (path) => world.text?.[path] ?? null, nextCommand: () => never,
     exec: async (cmd, args, opts) => {
       log.push(["exec", cmd, opts?.cwd ?? args.find((a) => a.endsWith(".py")) ?? "", args]);
+      if (cmd === "find" && world.find) return { code: 0, stderr: "", stdout: world.find(args) };
       if (cmd === "find" && args[1] === `${HOME}/code`) return { code: 0, stderr: "", stdout: world.repos.map((p) => `${p}/.git\n`).join("") };
       if (cmd === "git" && args[0] === "show") return { code: 0, stderr: "", stdout: world.show ?? "" };
       if (cmd === "stat") return { code: 0, stderr: "", stdout: world.touched.map((p) => `${Math.floor(Date.now() / 1000)} ${p}/.git/logs/HEAD\n`).join("") };
@@ -197,4 +201,16 @@ test("a commit in a worktree whose repo is not under the roots is checked", asyn
   log.length = 0;
   [...live][0].fire(["HEAD", "logs/HEAD", "COMMIT_EDITMSG"].map((f) => `${gitdir}/${f}`)); await settle();
   assert.deepEqual(asked("exec").filter((l) => l[1] === "git").map((l) => l[2]), [wt]);
+});
+
+test("a root whose own name starts with a dot is searched (the real find)", async () => {
+  const tmp = realpathSync(mkdtempSync(`${tmpdir()}/wt-find-`));
+  try {
+    for (const d of [".dotfiles/.git", ".dotfiles/nvim/.git", ".dotfiles/.cache/hidden/.git", ".dotfiles/node_modules/dep/.git", "code/app/.git", "code/app/sub/.git"]) mkdirSync(`${tmp}/${d}`, { recursive: true });
+    const find = (args) => { try { return execFileSync("find", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); } catch (e) { return e.stdout ?? ""; } };
+    reset({ find, text: { [`${HOME}/app/worktrees.config.json`]: JSON.stringify({ roots: [`${tmp}/.dotfiles`, `${tmp}/code`, `${tmp}/missing`], worktreeRoots: [] }) } });
+    const panel = await start();
+    // the hidden root itself and what is in it; still nothing hidden or pruned below a root
+    assert.deepEqual(panel.repos.map((r) => r.path.slice(tmp.length)), ["/.dotfiles", "/.dotfiles/nvim", "/code/app", "/code/app/sub"]);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
 });

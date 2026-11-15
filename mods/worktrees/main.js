@@ -198,7 +198,8 @@ export default class Worktrees extends View {
   // What the scan depends on, to tell a remembered list from other settings.
   where() { const { roots, worktreeRoots, prune, depth, max } = this.cfg; return JSON.stringify([roots, worktreeRoots, prune, depth, max]); }
 
-  // One find per root; stops at each .git (a folder, or a worktree's file) and skips hidden and pruned folders.
+  // One find per root; stops at each .git (a folder, or a worktree's file) and skips hidden and pruned folders
+  // below the root (-mindepth 1: the root itself may be hidden, as ~/.dotfiles is).
   // Then two small files per checkout, no process: `.git` when it is a file (worktree), and the config (remote, owner/repo).
   async scan(cx) {
     this.scanning = true; cx.notify();
@@ -208,7 +209,7 @@ export default class Worktrees extends View {
     for (const root of [...this.cfg.roots, ...this.cfg.worktreeRoots]) {
       try {
         // A missing root or an unreadable folder makes find exit nonzero; take what it printed.
-        const r = await exec("find", ["-H", root, "-maxdepth", String(this.cfg.depth), "(", ...prune, "(", "-name", ".*", "!", "-name", ".git", ")", ")", "-prune",
+        const r = await exec("find", ["-H", root, "-mindepth", "1", "-maxdepth", String(this.cfg.depth), "(", ...prune, "(", "-name", ".*", "!", "-name", ".git", ")", ")", "-prune",
           "-o", "-name", ".git", "-print", "-prune"], { timeout: 60000 });
         for (const line of r.stdout.split("\n")) if (line.endsWith("/.git")) found.add(line.slice(0, -5));
       } catch (e) { console.log(`${NAME}: find ${root}: ${e}`); }
