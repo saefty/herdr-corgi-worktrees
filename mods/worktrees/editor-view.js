@@ -100,8 +100,13 @@ async function openIn(target, id = null) {
   const argv = use ? E.openArgv(use, found[use], file ? { file, line: target.line ?? null } : { dir: target.root }, extra) : null;
   if (!argv) return "No editor to open this in was found.";
   // The dry run: the mod's own setting, or a file "editor.dry-run" in the Herdr home (one file for every mod that
-  // opens editors; looked for at every click, a file read).
-  if (dry || await readTextFile(`${appHome()}/editor.dry-run`).then((x) => x !== null).catch(() => false)) { try { localStorage.setItem("opened", JSON.stringify([...JSON.parse(localStorage.getItem("opened") ?? "[]"), [argv[0], ...argv[1]]].slice(-20))); } catch { /* none */ } return null; }
+  // opens editors; looked for at every click, a file read). It says so, with what it would have started: a link
+  // that reads "Opening …" and opens nothing looks broken.
+  if (dry || await readTextFile(`${appHome()}/editor.dry-run`).then((x) => x !== null).catch(() => false)) {
+    try { localStorage.setItem("opened", JSON.stringify([...JSON.parse(localStorage.getItem("opened") ?? "[]"), [argv[0], ...argv[1]]].slice(-20))); } catch { /* none */ }
+    notify({ title: "Dry run: no editor started", body: [argv[0], ...argv[1]].join(" "), level: "info" });
+    return null;
+  }
   const r = await exec(argv[0], argv[1], { timeout: 20000 }).catch((e) => ({ code: 1, stderr: String(e) }));
   if (r.code === 0) return null;
   known = null; try { localStorage.removeItem(KEY); } catch { /* none */ } // it may be gone: look again the next time

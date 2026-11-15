@@ -22,9 +22,10 @@ registerHooks({
   resolve: (spec, context, next) => (spec in stubs ? { url: `stub:${spec}`, shortCircuit: true } : next(spec, context)),
   load: (url, context, next) => (url.startsWith("stub:") ? { format: "module", source: stubs[url.slice(5)], shortCircuit: true } : next(url, context)),
 });
-const drags = [];
+const drags = [], texts = [];
 const EL = globalThis.EL = new Proxy(function () {}, { apply: () => EL, get: (_t, k) => (k === "then" ? undefined
   : k === "when" ? (on, fn) => { if (on) fn(EL); return EL; }
+  : k === "child" ? (c) => { if (typeof c === "string") texts.push(c); return EL; }
   : k === "drag_paths" ? (paths, ...more) => { drags.push([paths, ...more]); return EL; } : EL) });
 
 const HOME = "/h", repo = (n) => `${HOME}/code/r${n}`;
@@ -48,7 +49,7 @@ function reset(w) {
     spaces: () => world.spaces.map((folder, i) => ({ id: `s${i}`, folder, tabs: [] })),
     shared: (k) => sharedNow.get(k) ?? null, setShared: (k, v) => { log.push(["shared", k]); sharedNow.set(k, v); },
     run: (...a) => log.push(["run", ...a]), notify: (n) => log.push(["notify", n]), openOverlay: (o) => { log.push(["overlay", o]); }, closeOverlay: () => {},
-    readTextFile: async (path) => world.text?.[path] ?? null, nextCommand: () => never,
+    readTextFile: async (path) => world.read?.(path) ?? world.text?.[path] ?? null, nextCommand: () => never,
     exec: async (cmd, args, opts) => {
       log.push(["exec", cmd, opts?.cwd ?? args.find((a) => a.endsWith(".py")) ?? "", args]);
       if (cmd === "find" && world.find) return { code: 0, stderr: "", stdout: world.find(args) };
@@ -259,4 +260,20 @@ test("All: 60 rows at a time, however many checkouts there are", async () => {
   panel.allMore = 0;
   panel.command(`expand:${repo(99)}`, cx); // a row further down whose card is open is drawn, with the ones before it
   assert.ok(rows() > 60 && drags.some(([paths]) => paths[0] === repo(99)));
+});
+
+// VS Code is installed (its app folder is there), and the Herdr home has the file that makes every editor start a dry run.
+const withEditor = (path) => (path.includes("Visual Studio Code.app") ? "<plist/>" : path === `${HOME}/app/editor.dry-run` ? "" : null);
+
+test("a dry run starts nothing and says so, with what it would have started", async () => {
+  reset({ repos: [repo(1)], spaces: [], read: withEditor });
+  const panel = await start();
+  await EV.lookForEditors(true); // the tests before this one found no editor, and that answer is kept for ten minutes
+  log.length = 0;
+  panel.openEditor({ root: repo(1) }, cx); await settle();
+  assert.deepEqual(asked("exec"), []);
+  const [note] = asked("notify").map((l) => l[1]);
+  assert.deepEqual([note.title, note.level, note.body.slice(0, 5)], ["Dry run: no editor started", "info", "open "], note.body);
+  assert.ok(note.body.startsWith("open ") && note.body.includes(repo(1)), note.body);
+  assert.deepEqual(JSON.parse(store.get("opened")).length, 1); // and it is still noted in the mod's storage
 });
