@@ -47,7 +47,7 @@ function reset(w) {
     props: () => world.props ?? (world.shown ? { overlay: true } : {}), layout: () => null, focused: () => null, panes: () => [],
     spaces: () => world.spaces.map((folder, i) => ({ id: `s${i}`, folder, tabs: [] })),
     shared: (k) => sharedNow.get(k) ?? null, setShared: (k, v) => { log.push(["shared", k]); sharedNow.set(k, v); },
-    run: (...a) => log.push(["run", ...a]), notify: () => {}, openOverlay: () => {}, closeOverlay: () => {},
+    run: (...a) => log.push(["run", ...a]), notify: (n) => log.push(["notify", n]), openOverlay: (o) => { log.push(["overlay", o]); }, closeOverlay: () => {},
     readTextFile: async (path) => world.text?.[path] ?? null, nextCommand: () => never,
     exec: async (cmd, args, opts) => {
       log.push(["exec", cmd, opts?.cwd ?? args.find((a) => a.endsWith(".py")) ?? "", args]);
@@ -71,7 +71,7 @@ function reset(w) {
   };
 }
 const cx = {
-  notify() {}, stop_propagation() {}, focus_handle: () => ({ focus() {} }),
+  notify() {}, stop_propagation() {}, write_to_clipboard: (text) => log.push(["clipboard", text]), focus_handle: () => ({ focus() {} }),
   spawn: (fn) => Promise.resolve().then(() => fn(cx)),
   timer: { every: (ms, fn) => timers.push([ms, fn]), after: (_ms, fn) => setTimeout(() => fn(cx), 0) },
 };
@@ -83,7 +83,7 @@ const readAfterWatch = (n) => { const on = log.findIndex((l) => l[0] === "watch"
 
 reset({});
 const { default: Worktrees } = await import("./main.js");
-const Hub = await import("./hub.js");
+const Hub = await import("./hub.js"), EV = await import("./editor-view.js");
 const start = async () => { const v = new Worktrees(); v.init({}, cx); await settle(); return v; };
 const remembered = () => ({ repos: JSON.stringify({ v: 1, at: 1, where: "", repos: [{ path: repo(1), name: "r1", rel: "r1", gitdir: `${repo(1)}/.git`, common: `${repo(1)}/.git`, main: null, kind: "repo" }] }) });
 
@@ -225,4 +225,24 @@ test("Go to keeps its rows when one of two copies of the panel closes", async ()
   assert.deepEqual(sharedNow.get("goto.items.worktrees"), []);
   await docked.close(); log.length = 0; tick(cx); // the last one went: nothing lists them again by itself
   assert.equal(sharedNow.get("goto.items.worktrees"), null);
+});
+
+test("a menu entry acts in the copy that opened this menu, not in one whose menu was closed with Esc", async () => {
+  reset({ repos: [repo(1), repo(2)], spaces: [] });
+  const a = await start(), b = await start();
+  log.length = 0;
+  EV.openEditorMenu(a, { root: repo(1) });   // … and Esc: nothing tells the copy
+  EV.openEditorMenu(b, { root: repo(2) });
+  const [first, second] = asked("overlay").map((l) => l[1].props.token);
+  assert.ok(first && second && first !== second);
+  const click = EV.menuRun("editor-copy", second); // what the entry of b's menu runs; a mod's command reaches every shown copy
+  assert.equal(click, `editor-copy:${second}`);
+  assert.equal(EV.menuRun("editor-use:code", second), `editor-use:${second}:code`);
+  a.command(click, cx); b.command(click, cx);
+  assert.deepEqual(asked("clipboard"), [["clipboard", repo(2)]]);
+  a.command(click, cx); b.command(click, cx);  // a menu's entry counts once
+  a.command("editor-copy", cx); b.command(`editor-copy:${first}x`, cx); // no token, or one nobody gave out
+  assert.equal(asked("clipboard").length, 1);
+  a.command(EV.menuRun("editor-copy", first), cx); // a's own menu is still its own
+  assert.deepEqual(asked("clipboard").map((l) => l[1]), [repo(2), repo(1)]);
 });

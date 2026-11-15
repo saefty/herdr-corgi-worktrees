@@ -134,20 +134,26 @@ export function menuOf(target) {
     : m.kind === "copy" ? [target.file ? `${m.text} (${m.hint})` : m.text, "editor-copy", false, target.file ? "" : m.hint]
     : [m.text, "editor-look", false, ""]);
 }
+// Each menu has a token: its entries carry it, and only the copy that opened this menu acts on them. Without it a
+// menu closed with Esc left its target behind, and the next menu's entry (the command reaches every shown copy)
+// opened or remembered that repo in the other copy too.
+let menus = 0;
+export const menuRun = (command, token) => { const [name, ...rest] = command.split(":"); return [name, token, ...rest].join(":"); };
 export function openEditorMenu(view, target) {
-  view.editorTarget = target;
+  const token = `m${Date.now().toString(36)}${++menus}`;
+  view.editorMenu = { token, target };
   const items = menuOf(target);
   // as wide as its longest entry needs: the note on IntelliJ in a worktree is the long one, and it must be readable
   const width = Math.min(760, Math.max(280, 36 + 7 * Math.max(...items.map((m) => m[0].length))));
-  openOverlay({ mod: NAME, kind: "popup", width, height: 12 + 30 * items.length, props: { menu: items } });
+  openOverlay({ mod: NAME, kind: "popup", width, height: 12 + 30 * items.length, props: { menu: items, token } });
 }
 // The menu's own copy of the mod (props {menu}): an entry runs <mod>.<command> in the copy that opened it.
 export function renderMenu() {
-  const t = theme(), { menu = [], overlay } = props();
+  const t = theme(), { menu = [], token = "", overlay } = props();
   return v_flex().id("ed-menu").size_full().p(4).gap(1).bg(t.popover).text_color(t.foreground).text_size(12.5)
     .children(menu.map(([label, command, muted, tip], k) => div().id(`ed-m-${k}`).px(10).py(5).rounded(5).truncate().text_color(muted ? t.muted : t.foreground)
       .tooltip(tip || label)
-      .when(command !== "editor-none", (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => { run(`${NAME}.${command}`); closeOverlay(overlay); })).child(label)));
+      .when(command !== "editor-none", (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => { run(`${NAME}.${menuRun(command, token)}`); closeOverlay(overlay); })).child(label)));
 }
 
 // What a place shows for a target: null when there is no link (no editor, or none known yet).
@@ -175,13 +181,15 @@ export function editorLink(view, t, key, target, cx, short = false) {
       .tooltip("Other editors, Copy path, Look again.").accessibility_label("Other editors").on_click((_e, cx) => { cx.stop_propagation(); openEditorMenu(view, target); }).child("▾"))];
 }
 
-// The menu's entries, for the copy whose menu it was (view.editorTarget): true when the command was one of them.
+// The menu's entries ("editor-use:<token>:<id>", "editor-main:<token>", …), for the copy whose menu it was: true
+// when the command was one of them.
 export function menuCommand(view, c, cx) {
-  const [name, ...rest] = c.split(":"), arg = rest.join(":"), target = view.editorTarget;
+  const [name, token, ...rest] = c.split(":"), arg = rest.join(":");
   if (!name.startsWith("editor-")) return false;
   if (name === "editor-look") { cx.spawn(async (cx) => { await lookForEditors(true); cx.notify(); }); return true; }
-  if (!target) return true; // another copy's menu
-  view.editorTarget = null;
+  if (!token || view.editorMenu?.token !== token) return true; // another copy's menu, or one that is gone
+  const target = view.editorMenu.target;
+  view.editorMenu = null;
   if (name === "editor-use") {
     const r = roots.get(target.root) ?? E.gitLink(null, target.root), { choice, changed } = E.withChoice(shared(CHOICE), r.common, r.linked, arg);
     if (changed) setShared(CHOICE, choice); // every mod draws again: only when the choice is another one
