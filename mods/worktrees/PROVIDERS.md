@@ -110,6 +110,7 @@ the last copy of Worktrees closes, it sets `goto.items.worktrees` to `null`.
 | `pr:<repo>` | a click on the row's PR mark |
 | `history:<repo>` | the card's "History ↗": the repo's history view, as a tab of its own |
 | `older`, `more`, `family:<repo>` | fold or unfold "Older or untracked only", "Show n more", and one repo's worktrees |
+| `more:all` | the next 60 rows of "All" |
 | `editor` | open the checkout the focused pane is in, in its editor (for a key: `"cmd-shift-e": "worktrees.editor"` in `keys.json`) |
 | `editor:<path>[:<line>]` | the same for a folder or a file by its absolute path; a file opens at that line. The path must be in a git checkout |
 | `editor-menu[:<path>]` | the ▾ menu for it: the other editors, "Copy path", "Look for installed editors again" |

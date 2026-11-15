@@ -88,7 +88,7 @@ never write to a repo.
   click has the other installed editors; a pick there is kept for that repo, separately for its main checkout and
   for its worktrees, and shared with PR review. A worktree whose folder is gone says "Worktree removed" and
   offers the project's folder. One process per click, none to find the editors.
-- "All" lists every checkout by folder, clean ones included.
+- "All" lists every checkout by folder, clean ones included: the first 60, and 60 more with each "Show 60 more".
 - Drag a checkout's row onto a terminal and its folder's path is typed there, quoted and without Enter. The same
   goes for a changed file in a commit's details, when that file is in the checkout now. A click still does what
   it did.

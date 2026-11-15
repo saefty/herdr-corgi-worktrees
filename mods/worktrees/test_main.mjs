@@ -246,3 +246,17 @@ test("a menu entry acts in the copy that opened this menu, not in one whose menu
   a.command(EV.menuRun("editor-copy", first), cx); // a's own menu is still its own
   assert.deepEqual(asked("clipboard").map((l) => l[1]), [repo(2), repo(1)]);
 });
+
+test("All: 60 rows at a time, however many checkouts there are", async () => {
+  reset({ repos: Array.from({ length: 150 }, (_x, i) => repo(i + 1)), spaces: [] });
+  const panel = await start(), rows = () => { drags.length = 0; panel.render(cx); return drags.length; }; // every row is made draggable once
+  panel.command("show:all", cx);
+  assert.equal(rows(), 60);
+  panel.command("more:all", cx);
+  assert.equal(rows(), 120);
+  panel.command("more:all", cx);
+  assert.equal(rows(), 150);
+  panel.allMore = 0;
+  panel.command(`expand:${repo(99)}`, cx); // a row further down whose card is open is drawn, with the ones before it
+  assert.ok(rows() > 60 && drags.some(([paths]) => paths[0] === repo(99)));
+});

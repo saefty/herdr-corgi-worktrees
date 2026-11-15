@@ -34,6 +34,7 @@ const SHOW = [["needs", "Needs me"], ["all", "All"]];
 // Narrower than this (content px): no age, no context word, no group hints. The branch always stays.
 const COMPACT_PX = 300;
 const WEEK_ROWS = 8;   // "Changed this week" shows this many, then "Show n more"
+const ALL_ROWS = 60;   // "All" too, and that many more with each click: every row is a dozen elements built per frame
 const FAMILY_ROWS = 3; // "Not pushed" shows this many checkouts of one repo, then "Show n more of <repo>"
 const CARD_ROWS = 30;  // ponytail: a branch card lists the base and the newest branches; the rest is one count
 const STAT_CHUNK = 600; // only without python3 (see ages)
@@ -158,6 +159,7 @@ export default class Worktrees extends View {
     if (name === "show" && SHOW.some(([k]) => k === arg)) this.setShow(arg);
     else if (name === "expand") this.toggle(hit()?.path ?? null, cx);
     else if (name === "older") this.olderOpen = !this.olderOpen;
+    else if (name === "more" && arg === "all") this.allMore = (this.allMore ?? 0) + ALL_ROWS;
     else if (name === "more") this.moreWeek = !this.moreWeek;
     else if (name === "family") { const r = hit(), key = r && M.family(r); if (key) { if (this.famOpen.has(key)) this.famOpen.delete(key); else this.famOpen.add(key); } }
     else if (name === "open") { const r = hit(); if (r) this.openSpace(r, cx); }
@@ -318,7 +320,7 @@ export default class Worktrees extends View {
   // The checkouts in use: with a space or a terminal in them, or (unless spacesOnly) with tracked changes or commits
   // from the last day. The ones with a space first, then the most recently touched.
   inUse(spacesOnly = false) {
-    const now = Date.now(), open = spaceMap(new Set(this.repos.map((r) => r.path)));
+    const now = Date.now(), open = spaceMap(this.byPath);
     const at = (r) => M.touched(this.info[r.path], this.times[r.path]).at ?? 0;
     return this.repos.filter((r) => open.has(r.path) || (!spacesOnly && now - at(r) < M.DAY))
       .sort((a, b) => Number(open.has(b.path)) - Number(open.has(a.path)) || at(b) - at(a)).map((r) => r.path);
@@ -401,7 +403,7 @@ export default class Worktrees extends View {
     if (beat || !this.beaten || JSON.stringify(n) !== JSON.stringify(old)) { this.beaten = true; setShared(key("count"), { ...n, at: Date.now() }); }
     if (!shared("goto.api")) return;
     const g = M.groups(M.inView(this.repos, hook), this.info, this.times, Date.now(), this.cfg.weekDays * M.DAY);
-    const items = this.cfg.goto ? M.gotoItems(g, spaceMap(new Set(this.repos.map((r) => r.path)))) : null;
+    const items = this.cfg.goto ? M.gotoItems(g, spaceMap(this.byPath)) : null;
     if (items && !(shared("goto.providers") ?? []).includes(NAME)) setShared("goto.providers", [...(shared("goto.providers") ?? []), NAME]);
     if (JSON.stringify(items) !== JSON.stringify(shared(`goto.items.${NAME}`) ?? null)) setShared(`goto.items.${NAME}`, items);
     this.listed = Boolean(items);
@@ -677,21 +679,26 @@ export default class Worktrees extends View {
     const body = [];
     let g = null;
     if (shown) { // hidden: nothing below the header is worked out
-      this.spaceOf = spaceMap(new Set(this.repos.map((r) => r.path)));
+      this.spaceOf = spaceMap(this.byPath);
       g = M.groups(mine, this.info, this.times, Date.now(), days * M.DAY);
       const head = (id, text, hint) => h_flex().id(id).px(8).pt(10).pb(2).gap(8).items_center().justify_between().text_size(11)
         .child(div().flex_none().font_semibold().text_color(t.muted).child(text))
         .when(!this.compact && Boolean(hint), (e) => e.child(div().min_w(0).truncate().text_color(t.dim).child(hint)));
       const note = (text) => div().px(8).py(4).text_size(12).text_color(t.dim).child(text);
+      const more = (id, text, click) => div().id(id).ml(30).mr(8).px(6).h(24).flex().items_center().rounded(5).text_size(11.5).text_color(t.muted)
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => { click(); cx.notify(); }).child(text);
       if (this.show === "all") {
         const all = [...g.unpushed, ...g.week, ...g.older, ...g.clean, ...g.pending].sort((a, b) => a.repo.rel.localeCompare(b.repo.rel) || a.repo.path.localeCompare(b.repo.path));
-        body.push(...all.map((x) => this.row(x, t, { two: false, label: x.repo.rel }, cx)));
+        // The first ALL_ROWS and the ones asked for, and always as far as the row whose card is open: with hundreds
+        // of checkouts, building every row in every frame is what makes the panel slow.
+        const n = Math.max(ALL_ROWS + (this.allMore ?? 0), all.findIndex((x) => x.repo.path === this.open) + 1), rest = all.length - n;
+        body.push(...all.slice(0, n).map((x) => this.row(x, t, { two: false, label: x.repo.rel }, cx)));
+        if (rest > 0) body.push(more("all-more", rest > ALL_ROWS ? `Show ${ALL_ROWS} more of ${rest}` : `Show ${rest} more`, () => { this.allMore = n; }));
+        if (n > ALL_ROWS && all.length > ALL_ROWS) body.push(more("all-fewer", "Show fewer", () => { this.allMore = 0; if (all.findIndex((x) => x.repo.path === this.open) >= ALL_ROWS) this.open = this.card = null; }));
         if (!all.length && this.repos.length) body.push(note("No checkouts in this context."));
       } else {
         const twins = M.twins([...g.unpushed, ...g.week, ...g.older]);
         const two = (x) => this.row(x, t, { two: true, label: x.repo.name, twin: twins.has(x.repo.name) }, cx);
-        const more = (id, text, click) => div().id(id).ml(30).mr(8).px(6).h(24).flex().items_center().rounded(5).text_size(11.5).text_color(t.muted)
-          .hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => { click(); cx.notify(); }).child(text);
         // Complete, but a repo with many unpushed worktrees shows its newest few and one line for the rest.
         const fams = M.families(g.unpushed);
         body.push(head("h-unpushed", fams.length === g.unpushed.length ? `NOT PUSHED (${fams.length})` : `NOT PUSHED (${plural(fams.length, "repo")}, ${plural(g.unpushed.length, "checkout")})`, "only on this machine"));
