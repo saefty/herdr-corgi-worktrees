@@ -23,6 +23,7 @@ const C1 = M.configOf('{"roots":["~/work","/srv/git","rel","/","~"],"worktreeRoo
 assert.deepEqual(C1, { roots: [`${H}/work`, "/srv/git", `${H}/rel`], worktreeRoots: [], prune: ["vendor"], depth: 8, max: 1, weekDays: 14, goto: false, editors: [], dryRun: false }); // never "/" or the home
 assert.deepEqual(M.configOf("not json", H), C0);
 assert.deepEqual(M.configOf('["a"]', H).roots, C0.roots);
+assert.deepEqual(["/r/a b/ü.txt", "rel/x", "/r/a\nb", "/r/a\u007fb", null].map(M.draggable), [true, false, false, false, false]); // what may be dragged onto a terminal
 // Herdr's own folder for new worktrees (settings.json of the Herdr home) is one more worktree root
 const HW = (doc) => M.herdrWorktrees(doc === undefined ? null : JSON.stringify(doc), H);
 assert.deepEqual([HW(), HW({}), HW({ worktrees: {} }), HW({ worktrees: { directory: 7 } }), M.herdrWorktrees("{ not json", H)], Array(5).fill(`${H}/.herdr/worktrees`));

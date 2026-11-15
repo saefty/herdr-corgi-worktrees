@@ -21,3 +21,5 @@
   read once when its watch starts.
 - Herdr's own worktree folder (`worktrees.directory` in Herdr's `settings.json`, new in herdr-app 0.1.16) is
   searched and its checkouts are marked "agent worktree", next to `worktreeRoots`.
+- Drag onto a terminal: a checkout's row gives its folder, a changed file in a commit's details gives that file
+  in the checkout, if it is there.

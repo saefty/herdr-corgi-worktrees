@@ -49,6 +49,10 @@ export function configOf(text, home, herdrDir = null) {
   };
 }
 
+// May this path be handed to Herdr as something to drag onto a terminal: absolute, and no control characters
+// (Herdr refuses those, and a refusal while drawing would take the whole view with it).
+export const draggable = (path) => typeof path === "string" && path.startsWith("/") && !/[\u0000-\u001f\u007f]/.test(path);
+
 const under = (path, dir) => path === dir || path.startsWith(`${dir}/`);
 export const rootOf = (path, roots) => roots.filter((r) => under(path, r)).sort((a, b) => b.length - a.length)[0] ?? null;
 

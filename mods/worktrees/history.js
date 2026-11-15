@@ -161,8 +161,14 @@ export default class History {
       const r = await this.git(["show", "--no-color", "--numstat", "--format=%an%x1f%aI%x1f%B%x1e", "--end-of-options", node.id, "--"]);
       if (this.detail?.hash !== node.id) return;
       const data = r.code === 0 ? G.parseShow(r.stdout) : { author: "", date: "", message: "git show failed here.", files: [] };
-      // Which of the listed files are in the checkout now (a file read, no process): only those get a link.
-      if (this.inHead.has(node.id)) await Promise.all(data.files.slice(0, FILES).map(async (f) => { const abs = E.safeFile(this.path, f.path); f.here = Boolean(abs) && await fs.exists(abs).catch(() => false); }));
+      // Which of the listed files are in the checkout now (a file read, no process): those can be dragged onto a
+      // terminal (f.abs), and the ones of a commit of the checked-out branch get an editor link (f.here).
+      await Promise.all(data.files.slice(0, FILES).map(async (f) => {
+        const abs = E.safeFile(this.path, f.path);
+        const there = Boolean(abs) && await fs.exists(abs).catch(() => false);
+        f.abs = there && M.draggable(abs) ? abs : null;
+        f.here = there && this.inHead.has(node.id);
+      }));
       if (this.detail?.hash !== node.id) return;
       this.detail.data = data;
       cx.notify();
@@ -314,7 +320,8 @@ export default class History {
       .when(body.some(Boolean), (e) => e.child(v_flex().text_size(12).text_color(t.muted).children(body.map((l) => div().min_h(16).child(l)))))
       .child(!data ? div().text_size(11.5).text_color(t.dim).child("Reading the commit…")
         : v_flex().gap(1).text_size(11.5)
-          .children(data.files.slice(0, FILES).map((f, k) => h_flex().gap(8).min_h(18).items_center()
+          .children(data.files.slice(0, FILES).map((f, k) => h_flex().id(`h-frow-${k}`).gap(8).min_h(18).items_center()
+            .when(Boolean(f.abs), (e) => e.drag_paths([f.abs]).tooltip(`Drag onto a terminal: the path of this file in ${tilde(this.path)}, as it is there now.`))
             .child(div().flex_none().w(40).text_right().text_color(t.ansi2).child(f.add === null ? "bin" : `+${f.add}`))
             .child(div().flex_none().w(40).text_right().text_color(t.ansi1).child(f.del === null ? "" : `−${f.del}`))
             .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(f.path))

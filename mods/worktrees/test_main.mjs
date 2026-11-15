@@ -1,6 +1,7 @@
 // Run: node --test test_main.mjs   (invented data only)
 // main.js itself, with stand-ins for Herdr: "herdr" answers from the object `H` below and notes what was asked,
-// and every element is one object that takes any call. Nothing here starts a process or reads a file.
+// and every element is one object that takes any call (it notes what was made draggable). Nothing here starts a
+// process or reads a file.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerHooks } from "node:module";
@@ -12,12 +13,16 @@ const stubs = {
   herdr: HERDR.map((n) => `export const ${n} = (...a) => globalThis.H.${n}(...a);`).join("\n"),
   "gpui-kit": "export class View {}\nexport const div = globalThis.EL;",
   "gpui-base": BASE.map((n) => `export const ${n} = globalThis.EL;`).join("\n"),
+  "fs/promises": "export const exists = async (p) => globalThis.H.files.includes(p);",
 };
 registerHooks({
   resolve: (spec, context, next) => (spec in stubs ? { url: `stub:${spec}`, shortCircuit: true } : next(spec, context)),
   load: (url, context, next) => (url.startsWith("stub:") ? { format: "module", source: stubs[url.slice(5)], shortCircuit: true } : next(url, context)),
 });
-globalThis.EL = new Proxy(function () {}, { get: (_t, k) => (k === "then" ? undefined : globalThis.EL), apply: () => globalThis.EL });
+const drags = [];
+const EL = globalThis.EL = new Proxy(function () {}, { apply: () => EL, get: (_t, k) => (k === "then" ? undefined
+  : k === "when" ? (on, fn) => { if (on) fn(EL); return EL; }
+  : k === "drag_paths" ? (paths, ...more) => { drags.push([paths, ...more]); return EL; } : EL) });
 
 const HOME = "/h", repo = (n) => `${HOME}/code/r${n}`;
 let log, store, timers, world, live, peak;
@@ -34,6 +39,7 @@ function reset(w) {
   } });
   const sharedNow = new Map();
   globalThis.H = {
+    files: w.files ?? [],
     checking: () => world.checking, home: () => HOME, appHome: () => `${HOME}/app`, theme: () => ({}), settings: () => ({}), window: () => ({}),
     props: () => world.props ?? (world.shown ? { overlay: true } : {}), layout: () => null, focused: () => null, panes: () => [],
     spaces: () => world.spaces.map((folder, i) => ({ id: `s${i}`, folder, tabs: [] })),
@@ -43,6 +49,7 @@ function reset(w) {
     exec: async (cmd, args, opts) => {
       log.push(["exec", cmd, opts?.cwd ?? args.find((a) => a.endsWith(".py")) ?? ""]);
       if (cmd === "find" && args[1] === `${HOME}/code`) return { code: 0, stderr: "", stdout: world.repos.map((p) => `${p}/.git\n`).join("") };
+      if (cmd === "git" && args[0] === "show") return { code: 0, stderr: "", stdout: world.show ?? "" };
       if (cmd === "stat") return { code: 0, stderr: "", stdout: world.touched.map((p) => `${Math.floor(Date.now() / 1000)} ${p}/.git/logs/HEAD\n`).join("") };
       return { code: 0, stderr: "", stdout: "" };
     },
@@ -151,4 +158,21 @@ test("watches: never more than 32 at once, and a refused one is asked once per p
   panel.command("tick", cx); await settle();
   assert.equal(live.size, 20);
   assert.ok(peak <= 32);
+});
+
+test("drag onto a terminal: a checkout's row is its folder, a commit's file the file in the checkout if it is there", async () => {
+  reset({ repos: [repo(1)], spaces: [], files: [`${repo(1)}/src/a.txt`, `${repo(1)}/b\tc.txt`],
+    show: "Ann\x1f2026-11-15T10:00:00+00:00\x1ffix: a\x1e\n1\t0\tsrc/a.txt\n0\t3\tgone.txt\n2\t2\t../../etc/passwd\n1\t1\tb\tc.txt\n" });
+  const panel = await start();
+  panel.command("show:all", cx);
+  drags.length = 0; panel.render(cx);
+  assert.deepEqual(drags, [[[repo(1)]]]); // local: no machine named
+
+  world.props = { history: repo(1) };
+  const view = (await start()).hist;
+  view.nodes = [{ id: "abc1234", commit: { hash: "abc1234", subject: "fix: a", refs: { heads: [] } } }];
+  view.pick(0, cx); await settle();
+  drags.length = 0; view.details({}, cx);
+  assert.deepEqual(drags, [[[`${repo(1)}/src/a.txt`]]]); // not the deleted file, not one outside the checkout, not one with a tab in its name
+  assert.deepEqual(view.detail.data.files.map((f) => f.here), [false, false, false, false]); // editor links stay for commits of the checked-out branch
 });

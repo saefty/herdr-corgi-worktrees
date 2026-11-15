@@ -574,11 +574,13 @@ export default class Worktrees extends View {
     // "IJ ↗" / "VS ↗" in a reserved width, only on the row the pointer is on; a right click on the row: other editors.
     const target = this.folderTarget(path), hover = this.hover === path;
     const editor = haveEditors() ? h_flex().flex_none().w(SHORT_W).h(20).justify_end().children(hover ? editorLink(this, t, `row-${path}`, target, cx, true) : []) : null;
-    return v_flex().id(`r-${path}`).px(2).py(two ? 3 : 0).rounded(6).hover((st) => st.bg(t.hover))
+    // The row is also the folder itself: dragged onto a terminal, its path is typed there (a click stays a click).
+    const drag = M.draggable(path);
+    return v_flex().id(`r-${path}`).when(drag, (e) => e.drag_paths([path])).px(2).py(two ? 3 : 0).rounded(6).hover((st) => st.bg(t.hover))
       .when(Boolean(editor), (e) => e // one more draw per row the pointer enters: only when there is something to show
         .on_hover((over, cx) => { const was = this.hover; this.hover = over ? path : was === path ? null : was; if (this.hover !== was) cx.notify(); })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); if (editorFor(target, cx)) openEditorMenu(this, target); }))
-      .tooltip(`${path} · ${spaceId ? "click: go to its space" : "click: open a space for it"}`)
+      .tooltip(`${path} · ${spaceId ? "click: go to its space" : "click: open a space for it"}${drag ? " · drag onto a terminal: its path" : ""}`)
       .on_click((_e, cx) => this.openSpace(repo, cx))
       .child(h_flex().gap(4).items_center().min_h(24).child(chevron).when(Boolean(space), (e) => e.child(space))
         .child(name).when(!two, (e) => e.child(line2.flex_none().max_w(170).overflow_hidden()))

@@ -89,6 +89,9 @@ never write to a repo.
   for its worktrees, and shared with PR review. A worktree whose folder is gone says "Worktree removed" and
   offers the project's folder. One process per click, none to find the editors.
 - "All" lists every checkout by folder, clean ones included.
+- Drag a checkout's row onto a terminal and its folder's path is typed there, quoted and without Enter. The same
+  goes for a changed file in a commit's details, when that file is in the checkout now. A click still does what
+  it did.
 - Cheap by design. Starting a process is what costs time (a quarter of a second each on some machines), so git
   is asked as rarely as possible: one small helper reads from files which checkouts changed since their last
   `git status`, one process for all of them, and git runs only for those. What was known is kept across app
