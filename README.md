@@ -85,7 +85,7 @@ never write to a repo.
   `git status`, one process for all of them, and git runs only for those. What was known is kept across app
   starts, so the list is there at once. All checkouts are checked when the panel opens and on ↻; while it stays
   open, only the ones in use (a space or a terminal in them, or changes from the last day) every five minutes; a
-  watch on each `.git` reports commits and pushes right away.
+  watch on the `.git` of up to 32 repos in use reports commits and pushes right away.
 - Other mods can add pull request marks, split the list by context (work and personal, say), read the number of
   repos that are not pushed for a button, and find the listed checkouts in Go to. Without any of them the panel
   works on its own.

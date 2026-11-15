@@ -34,7 +34,9 @@ branch stays.
   It reads HEAD, the refs and packed-refs, the config (upstream), the stash log, parses the index and `lstat`s the
   tracked files, their folders and the folders right below those. Per checkout it prints a JSON line: branch,
   commit, upstream commit, whether the commit is a remote branch's, stash count, the times (`logs/HEAD`, index,
-  newest changed tracked file, `FETCH_HEAD`) and a fingerprint of all of it. Second, only for checkouts whose
+  newest changed tracked file, `FETCH_HEAD`) and a fingerprint of all of it. Of the index the fingerprint takes
+  what is staged (paths, modes, blobs, flags), not the file's time: other tools' `git status` rewrites the index
+  every few seconds in a repo someone works in. Second, only for checkouts whose
   fingerprint differs from the one stored with their last git status (or that have none, or with Shift-↻ for all):
   `git --no-optional-locks -c core.fsmonitor=false status --porcelain=v2 --branch --show-stash -z`, 8 at a time.
   For a branch without upstream whose commit is on no remote ref: `git rev-list --count HEAD --not --remotes`,
@@ -43,8 +45,9 @@ branch stays.
   start; rows update as their answers come in, and the header says "checking 8/21 …" meanwhile.
 - When: all checkouts at start, on ↻ and when the panel comes back on screen after more than a minute. Every 5
   minutes while it is on screen only the checkouts in use: a space's folder or a terminal inside, or touched in the
-  last day. A watch on each repo's `.git` flags that checkout (and the worktrees its changed paths belong to);
-  flags are collected for 1.5 s and checked together. One check runs at a time. The header says "git as of 13:40
+  last day (a check after a `.git` change does not put this off). A watch on the `.git` of up to 32 repos in use flags that checkout
+  (and the worktrees its changed paths belong to); flags are collected for 1.5 s and checked together, or for a
+  minute when only index files moved (staging, or another tool's `git status`). One check runs at a time. The header says "git as of 13:40
   (all 13:05)" when the last check of everything is older.
 - Groups: not pushed = ahead of upstream, or never pushed with commits on no remote. This week = tracked changes
   whose newest changed file is at most `weekDays` old (the index time only when no changed file is left). Older =
@@ -135,6 +138,9 @@ last pass. Settings: `worktrees.config.json` in the app home.
   changed files.
 - A worktree's git folder lies inside its repo's `.git`: one watch per repo covers its worktrees, and the changed
   paths say which checkout to re-check.
+- Herdr watches at most 64 folders for all mods together ("already watching 64 folders"), and a watch cannot be
+  given back before something changes there. A watch per repo starves the other mods: watch at most 32, the repos
+  in use first (`model.js watchPlan`), and keep them.
 - A stash belongs to the repo: every worktree reports it.
 - BSD `stat -f '%m %N'` and GNU `stat -c '%Y %n'` differ; try one, then the other.
 - Never judge "merged" by ancestry: a squash merge leaves the branch unmerged.

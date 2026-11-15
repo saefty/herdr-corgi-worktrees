@@ -47,7 +47,8 @@ def main():
         assert a["upstream"] == "origin/main" and a["upOid"] == a["oid"] and a["onRemote"] is True, a
         assert a["stash"] == 0 and a["fp"] and a["t"]["files"] is None and a["t"]["index"] and a["t"]["head"], a
         assert look(repo)["fp"] == a["fp"]                       # nothing happened: the same fingerprint
-        git(repo, "status")                                      # git may rewrite the index: at most the index part moves
+        time.sleep(1.1); os.utime(f"{repo}/README.md"); git(repo, "status")   # a touched file: git status refreshes the index file
+        assert look(repo)["fp"].split("|")[2] == a["fp"].split("|")[2], "an index refresh is not a change of what is staged"
         steady = look(repo)["fp"]
 
         def changes(what, expect=True):

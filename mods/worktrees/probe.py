@@ -7,7 +7,8 @@ Prints one JSON line per checkout:
     {"path", "fp", "branch", "oid", "upstream", "upOid", "onRemote", "remotes", "stash",
      "t": {"head", "index", "files", "fetch"}}          times in ms, null when unknown
 fp is a fingerprint of everything `git status` depends on that can be read without git: HEAD and upstream
-commits, the index file, the newest change time among the tracked files, the modification times of their
+commits, what the index lists (paths, blobs, flags: not its file time, which every `git status` of another tool
+moves), the newest change time among the tracked files, the modification times of their
 folders and of the folders right below them (where untracked files would show up), the stash and the remote refs.
 The same fp as last time means git status would say the same, so the mod does not ask git again. fp is null when
 this script cannot tell (a ref backend or an index it does not read): the mod asks git then.
@@ -15,6 +16,7 @@ Known gap: a new untracked file two or more levels below any tracked folder, ins
 and held only ignored files, does not change fp.
 Reads only. Standard library only.
 """
+import hashlib
 import json
 import os
 import struct
@@ -38,8 +40,10 @@ def mtime_ms(path):
         return None
 
 
-def index_entries(data):
-    """[(path bytes, mtime ns, size, mode, skip)] of a git index (versions 2 to 4), or None when it is not one."""
+def index_entries(data, digest=None):
+    """[(path bytes, mtime ns, size, mode, skip)] of a git index (versions 2 to 4), or None when it is not one.
+    digest (a hashlib object) is fed every entry's path, mode, blob and flags: what is staged, without the cached
+    file times that a refresh rewrites."""
     if not data or len(data) < 12 or data[:4] != b"DIRC":
         return None
     version, count = struct.unpack(">II", data[4:12])
@@ -72,6 +76,8 @@ def index_entries(data):
                 path = data[pos:end]
                 pos = start + ((end - start + 8) // 8) * 8  # padded with 1 to 8 NULs to a multiple of 8
             prev = path
+            if digest is not None:
+                digest.update(path + b"\0" + data[start + 24:start + 28] + data[start + 40:start + 62] + (b"s" if skip else b""))
             out.append((path, ms * 1_000_000_000 + mn, size, mode, skip))
     except (struct.error, ValueError, IndexError):
         return None
@@ -195,17 +201,13 @@ def probe(path, gitdir, common, cache):
     if resolve(common, common, "refs/stash", cache):
         out["stash"] = len((read(os.path.join(common, "logs", "refs", "stash")) or "").splitlines())
     data = read(os.path.join(gitdir, "index"), "rb")
-    entries = [] if data is None else index_entries(data)
+    staged = hashlib.blake2b(digest_size=8)
+    entries = [] if data is None else index_entries(data, staged)
     if entries is None:
         return out
     newest, folders, missing, changed = worktree(os.fsencode(path), entries)
     out["t"]["files"] = changed
-    try:
-        st = os.stat(os.path.join(gitdir, "index"))
-        index = f"{st.st_mtime_ns}:{st.st_size}"
-    except OSError:
-        index = "none"
-    out["fp"] = "|".join(str(x) for x in (out["oid"], out["upOid"], index, newest, folders, len(entries), missing, out["stash"], remote_stamp))
+    out["fp"] = "|".join(str(x) for x in (out["oid"], out["upOid"], staged.hexdigest(), newest, folders, len(entries), missing, out["stash"], remote_stamp))
     return out
 
 

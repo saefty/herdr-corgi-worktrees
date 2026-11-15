@@ -175,6 +175,13 @@ const loop = new Map([["a", { number: 1, state: "open", base: "b" }], ["b", { nu
 assert.equal(M.branchCard([ref("a", "1", "", "", "", "2", " ", "1 0"), ref("b", "2", "", "", "", "1", " ", "1 0")].join("\n"), { base: "main", prs: loop }).length, 2);
 assert.deepEqual([0, 1, 3, 63, 5000].map((n) => M.barPx(n)), [0, 6, 12, 36, 36]);
 
+// ---- which repos are watched: few, the ones in use, a repo once for its worktrees
+const wr = [{ path: "/r/a" }, { path: "/w/a/x", main: "/r/a" }, { path: "/r/b" }, { path: "/w/z/y", main: "/elsewhere/z" }, { path: "/r/c" }];
+assert.deepEqual(M.watchPlan(wr, ["/w/a/x", "/r/a", "/w/z/y", "/r/b", "/r/c"], [], 3), ["/r/a", "/w/z/y", "/r/b"]);
+assert.deepEqual(M.watchPlan(wr, ["/r/c", "/r/b"], ["/r/a", "/r/b"], 3), ["/r/c"]);   // what is watched stays, the budget counts it
+assert.deepEqual(M.watchPlan(wr, ["/r/c"], ["/r/a", "/r/b", "/w/z/y"], 3), []);
+assert.deepEqual(M.watchPlan(wr, ["/gone", "/r/c"], [], 3), ["/r/c"]);
+
 // ---- is the block on screen
 const L = (hidden, active) => ({ id: "root", type: "row", children: [{ id: "main", type: "block", content: { tab: "active" } },
   { id: "panel", type: "column", hidden, children: [{ id: "body", type: "stack", active, children: [{ id: "files", type: "block", content: { mod: "files" } }, { id: "wt", type: "block", content: { mod: "worktrees" } }] }] }] });

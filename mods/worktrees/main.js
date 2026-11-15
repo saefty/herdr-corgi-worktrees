@@ -25,6 +25,8 @@ const RESCAN_MS = 30 * 60 * 1000;
 const STATUS_MS = 5 * 60 * 1000;
 const TICK_MS = 10 * 1000;  // how often the panel looks whether it is shown (a layout lookup, no process)
 const WATCH_MS = 1500;      // .git changes are collected this long, then checked together
+const WATCH_MAX = 32;       // Herdr watches at most 64 folders for all mods together: this mod takes half, for the repos in use
+const INDEX_MS = 60 * 1000; // … but when only the index file moved (staging, or another tool's git status): this long
 const PROBES = 4;           // a full pass runs up to this many probes side by side, so the list fills in parts
 const PROBE_MIN = 40;       // … but not for fewer checkouts than this each
 const SHOW = [["needs", "Needs me"], ["all", "All"]];
@@ -58,6 +60,7 @@ export default class Worktrees extends View {
     this.fp = {};            // path -> the probe's fingerprint when git status last ran there
     this.local = new Map();  // path -> {key, n}: the never-pushed count, kept while HEAD and the remote refs stay
     this.flagged = new Set(); // checkouts whose .git changed, waiting for the next check
+    this.slow = new Set();    // the same, when only their index file changed: checked once a minute
     this.bases = new Map();  // common git dir -> the base branch its card last used
     this.watched = new Map(); // path -> the folder watched for it
     this.prs = M.prIndex(null); // from providers, see prsNow
@@ -98,7 +101,13 @@ export default class Worktrees extends View {
     // called then), so that opening the panel checks all of them.
     cx.timer.every(TICK_MS, (cx) => {
       if (!shownNow()) this.away = true;
-      else if (this.checkedAt && Date.now() - this.checkedAt > STATUS_MS) cx.spawn((cx) => this.pass(cx, "tick", this.inUse()));
+      else if (this.tickAt && Date.now() - this.tickAt > STATUS_MS) cx.spawn((cx) => this.pass(cx, "tick", this.inUse()));
+    });
+    cx.timer.every(INDEX_MS, (cx) => {
+      if (!this.slow.size) return;
+      for (const p of this.slow) this.flagged.add(p);
+      this.slow.clear();
+      cx.spawn((cx) => this.flush(cx));
     });
     // Commands, for keys.json ("<mod>.<command>"): show:needs|all, expand:<repo>, older, more, family:<repo>,
     // open:<repo>, pr:<repo>, history:<repo>, refresh, refresh:all (ask git for every checkout), tick.
@@ -265,9 +274,12 @@ export default class Worktrees extends View {
   }
 
   // The checkouts in use: with a space or a terminal in them, or with tracked changes or commits from the last day.
+  // The ones with a space first, then the most recently touched.
   inUse() {
     const now = Date.now(), open = spaceMap(new Set(this.repos.map((r) => r.path)));
-    return this.repos.filter((r) => open.has(r.path) || now - (M.touched(this.info[r.path], this.times[r.path]).at ?? 0) < M.DAY).map((r) => r.path);
+    const at = (r) => M.touched(this.info[r.path], this.times[r.path]).at ?? 0;
+    return this.repos.filter((r) => open.has(r.path) || now - at(r) < M.DAY)
+      .sort((a, b) => Number(open.has(b.path)) - Number(open.has(a.path)) || at(b) - at(a)).map((r) => r.path);
   }
 
   // Check checkouts. kind: "full" (all: panel opened, ↻), "tick" (the ones in use), "watch" (the ones whose .git
@@ -311,7 +323,8 @@ export default class Worktrees extends View {
       if (this.noProbe) runs += await this.ages(paths);
     } finally { this.running = false; } // whatever fails, the next pass may start
     this.checkedAt = Date.now();
-    if (kind === "full") this.fullAt = this.sessionFull = this.checkedAt;
+    if (kind === "full") { this.fullAt = this.sessionFull = this.checkedAt; this.watchAll(cx); } // now it is known which ones are in use
+    if (kind === "full" || kind === "tick") this.tickAt = this.checkedAt; // watch checks in between do not put the tick off
     this.passes = { ...this.passes, [kind]: { checkouts: paths.length, starts: runs, git: asked, ms: Date.now() - started, at: this.checkedAt } };
     try { localStorage.setItem("pass", JSON.stringify(this.passes)); } catch {}
     this.save();
@@ -349,13 +362,13 @@ export default class Worktrees extends View {
     if (JSON.stringify(items) !== JSON.stringify(shared(`goto.items.${NAME}`) ?? null)) setShared(`goto.items.${NAME}`, items);
   }
 
-  // Re-check a repo when its .git changes. A worktree's git folder lies inside its repo's .git, so that repo's watch
-  // covers it (touch sorts the changes out); a worktree gets a watch of its own only when its repo is not scanned.
+  // Re-check a repo when its .git changes: for the repos in use, at most WATCH_MAX of them (model.js watchPlan).
+  // A worktree's git folder lies inside its repo's .git, so that repo's watch covers it (touch sorts the changes
+  // out). Everything else is checked when the panel opens, on ↻ and, while in use, every five minutes.
   watchAll(cx) {
-    const now = new Map(this.repos.filter((r) => !r.main || !this.byPath.has(r.main)).map((r) => [r.path, r.main ? r.gitdir : `${r.path}/.git`]));
-    for (const [path, dir] of [...this.watched]) if (now.get(path) !== dir) this.watched.delete(path);
-    for (const [path, dir] of now) {
-      if (this.watched.has(path)) continue;
+    for (const path of [...this.watched.keys()]) if (!this.byPath.has(path)) this.watched.delete(path); // gone: its loop ends at its next change
+    for (const path of M.watchPlan(this.repos, this.inUse(), [...this.watched.keys()], WATCH_MAX)) {
+      const r = this.byPath.get(path), dir = r.main ? r.gitdir : `${path}/.git`;
       this.watched.set(path, dir);
       cx.spawn(async (cx) => {
         while (this.watched.get(path) === dir) {
@@ -377,9 +390,13 @@ export default class Worktrees extends View {
     const names = new Set(changed.map(wt).filter(Boolean));
     const own = !changed.length || changed.some((p) => !wt(p));
     const remote = changed.some((p) => p === dir || p.includes("/refs/remotes/") || p.endsWith("/packed-refs") || p.endsWith("/FETCH_HEAD"));
-    if (own) this.flagged.add(path);
-    for (const r of this.repos) if (r.main === path && (remote || names.has(r.gitdir.slice(r.gitdir.lastIndexOf("/") + 1)))) this.flagged.add(r.path);
-    if (this.flushing) return;
+    // Only index files moved: staging, or another tool's `git status` refreshing it (some do that every few
+    // seconds). Neither changes what is pushed, so these wait for the once-a-minute round.
+    const lazy = changed.length > 0 && changed.every((p) => /\/index(\.lock)?$/.test(p));
+    const to = lazy ? this.slow : this.flagged;
+    if (own) to.add(path);
+    for (const r of this.repos) if (r.main === path && (remote || names.has(r.gitdir.slice(r.gitdir.lastIndexOf("/") + 1)))) to.add(r.path);
+    if (lazy || this.flushing) return;
     this.flushing = true;
     cx.timer.after(WATCH_MS, (cx) => cx.spawn(async (cx) => { this.flushing = false; await this.flush(cx); }));
   }
