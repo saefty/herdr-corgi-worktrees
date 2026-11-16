@@ -398,14 +398,14 @@ export default class Worktrees extends View {
 
   // What other mods may read. shared "<mod>.count": how many repos have commits only here, {total, contexts,
   // none, at}; numbers only. `at` says the count is alive: this mod only counts once it was shown in this app
-  // session, and a number from an earlier session would be a guess. With Go to installed: the checkouts that need
-  // a look as its rows, those of the shown context only.
+  // session, and a number from an earlier session would be a guess. Unless the goto setting is off: the checkouts
+  // that need a look as Go to's rows, those of the shown context only. Written whether or not Go to is there: its
+  // goto.api appears only when the box first opens, and the box reads the rows then.
   publish(beat = false) {
     if (!this.sessionFull) return; // not before this session's first full pass: until then it is yesterday's number
     const hook = this.contexts();
     const n = M.counts(this.repos, this.info), { at: _at, ...old } = shared(key("count")) ?? {};
     if (beat || !this.beaten || JSON.stringify(n) !== JSON.stringify(old)) { this.beaten = true; setShared(key("count"), { ...n, at: Date.now() }); }
-    if (!shared("goto.api")) return;
     const g = M.groups(M.inView(this.repos, hook), this.info, this.times, Date.now(), this.cfg.weekDays * M.DAY);
     const items = this.cfg.goto ? M.gotoItems(g, spaceMap(this.byPath)) : null;
     if (items && !(shared("goto.providers") ?? []).includes(NAME)) setShared("goto.providers", [...(shared("goto.providers") ?? []), NAME]);

@@ -221,8 +221,23 @@ test("a root whose own name starts with a dot is searched (the real find)", asyn
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 
+test("the Go to rows are there before Go to was ever opened: goto.api appears only at its first open", async () => {
+  reset({ repos: [repo(1)], spaces: [repo(1)] });
+  await start();
+  assert.equal(sharedNow.get("goto.api"), undefined);
+  assert.deepEqual(sharedNow.get("goto.items.worktrees"), []);
+  assert.deepEqual(sharedNow.get("goto.providers"), ["worktrees"]);
+});
+
+test("with the goto setting off nothing goes to Go to", async () => {
+  reset({ repos: [repo(1)], spaces: [repo(1)], text: { [`${HOME}/app/worktrees.config.json`]: JSON.stringify({ goto: false }) } });
+  await start();
+  assert.equal(sharedNow.get("goto.items.worktrees"), undefined);
+  assert.equal(sharedNow.get("goto.providers"), undefined);
+});
+
 test("Go to keeps its rows when one of two copies of the panel closes", async () => {
-  reset({ repos: [repo(1)], spaces: [repo(1)], shared: { "goto.api": { version: 1 } } });
+  reset({ repos: [repo(1)], spaces: [repo(1)] });
   const docked = await start(), tick = timers.find(([ms]) => ms === 10000)[1], windowed = await start();
   assert.deepEqual(sharedNow.get("goto.items.worktrees"), []); // nothing needs a look in this world: an empty list, but a list
   await windowed.close();

@@ -79,7 +79,7 @@ Without the hook there are no contexts: everything is listed, rows carry no cont
 |---|---|---|
 | `worktrees.api` | `{version: 1}` | at start |
 | `worktrees.count` | `{total, contexts: {<id>: n}, none, at}` | after every full pass and whenever a count changes (panel hidden: changes in repos with a space); confirmed at least every 30 minutes |
-| `goto.items.worktrees` | Go to items, see below | with Go to installed (`goto.api`) and the `goto` setting on |
+| `goto.items.worktrees` | Go to items, see below | after every pass that changes them, unless the `goto` setting is off; whether or not Go to is installed |
 
 `worktrees.count` is how many repos have commits that exist only on this machine: ahead of their upstream, or on a
 branch that was never pushed. A repo and its worktrees count once. `total` is all of them, `contexts[id]` those of
@@ -94,6 +94,10 @@ rather than show a number from an earlier session.
 rows: title `<repo> · <branch>`, subtitle "3 not pushed · 2 changed", tag "Not pushed" or "Changed", `context`
 when known. A row goes to the checkout's space (`focus: {space}`) or opens one (`run: [["space.new", …]]`). When
 the last copy of Worktrees closes, it sets `goto.items.worktrees` to `null`.
+
+The rows don't wait for `goto.api`: Go to sets it only when its box first opens, and reads the rows right then.
+So they are there at the first Go to after an app start, once the panel has started (the first time it shows)
+and its first pass is through.
 
 ## 4. Commands
 
