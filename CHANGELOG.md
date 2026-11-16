@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2 (2026-11-16)
+
+### Fixes
+
+- goto: publish the Go to rows without waiting for goto.api
+
+### Other
+
+- docs(readme): screenshots again, with the editor links, "Opening …" and the ▾ menu
+
 ## 0.1.1 (2026-11-15)
 
 - The list in the panel could not be scrolled down, in "Needs me" and in "All". It has a name and a scroll
